@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.json">
+<title>Tomato Leaf Diagnosis</title>
+<style>
+  body{font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#fafafa}
+  button,input{font-size:18px;margin:8px 0}
+  canvas{max-width:100%;border-radius:8px}
+  #report{background:#f4f1ea;border:2px solid #dcd6cd;border-radius:12px;padding:16px;margin-top:12px}
+  .bar{display:flex;height:22px;border-radius:6px;overflow:hidden}
+  .bar div{flex:1}
+</style>
+</head>
+<body>
+<h2>🍅 Tomato Leaf Disease Diagnosis</h2>
+<p id="status">Loading models…</p>
+<input id="file" type="file" accept="image/*" disabled>
+<canvas id="view"></canvas>
+<div id="report" hidden></div>
+<script src="opencv.js"></script>
+<script src="ort.min.js"></script>
+<script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
