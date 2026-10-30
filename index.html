@@ -1,45 +1,31 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>番茄病害離線辨識 APP</title>
-    <link rel="manifest" href="manifest.json">
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f4f1ea; color: #2c2c2c; }
-        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 400px; margin: auto; }
-        input, button { margin-top: 15px; padding: 10px; font-size: 16px; }
-        button { background: #27ae60; color: white; border: none; border-radius: 6px; cursor: pointer; }
-        img { max-width: 100%; margin-top: 15px; border-radius: 8px; }
-    </style>
-    <!-- 載入 OpenCV.js 與 ONNX Runtime -->
-    <script async src="opencv.js"></script>
-    <script src="ort.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Tomato Leaf Diagnosis</title>
+<style>
+  body{font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#fafafa}
+  button,input{font-size:18px;margin:8px 0}
+  canvas{max-width:100%;border-radius:8px}
+  #report{background:#f4f1ea;border:2px solid #dcd6cd;border-radius:12px;padding:16px;margin-top:12px}
+  .bar{display:flex;height:22px;border-radius:6px;overflow:hidden}
+  .bar div{flex:1}
+</style>
 </head>
 <body>
-    <div class="card">
-        <h1>🍅 番茄葉片病害辨識</h1>
-        <p>手機離線 AI 診斷工具</p>
-        
-        <!-- 拍照或上傳按鈕 -->
-        <input type="file" id="imageInput" accept="image/*"><br>
-        <button onclick="runDiagnosis()">🔍 開始診斷</button>
-
-        <!-- 預覽與結果區 -->
-        <div>
-            <img id="previewImg" style="display:none;" />
-            <h3 id="report">請先上傳或拍攝葉片照片</h3>
-        </div>
-    </div>
-
-    <!-- 註冊 PWA 離線 Service Worker -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').then(() => {
-                console.log("✅ Service Worker 註冊成功，支援離線執行！");
-            });
-        }
-    </script>
-    <script src="app.js"></script>
+<h2>🍅 Tomato Leaf Disease Diagnosis</h2>
+<p id="status">Loading models…</p>
+<input id="file" type="file" accept="image/*" disabled>
+<canvas id="view"></canvas>
+<div id="report" hidden></div>
+<script src="opencv.js"></script>
+<script src="ort.min.js"></script>
+<script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
 </body>
 </html>

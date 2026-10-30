@@ -1,15 +1,12 @@
 {
-  "name": "番茄病害辨識系統",
-  "short_name": "番茄AI",
+  "name": "Tomato Leaf Diagnosis",
+  "short_name": "TomatoAI",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f4f1ea",
-  "theme_color": "#27ae60",
+  "background_color": "#ffffff",
+  "theme_color": "#1f4d2b",
   "icons": [
-    {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    }
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}
   ]
 }
