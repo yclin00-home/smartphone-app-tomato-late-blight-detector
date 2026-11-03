@@ -1,9 +1,18 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
-const M1_TOMATO = 1;
-const M2_BLIGHT = 0;
+const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
+const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output
+
+// Status colors: only late blight is red; everything else is neutral
+const STATUS_COLORS = {
+  'non-tomato': '#555555',
+  'tomato-without-late-blight': '#1e8449',
+  'tomato-with-late-blight': '#a93226',
+};
+
 let sess1, sess2;
 const $ = id => document.getElementById(id);
+
 async function init() {
   let step = '';
   try {
@@ -29,6 +38,8 @@ async function init() {
     console.error(err);
   }
 }
+
+// ---------- OpenCV helpers ----------
 function inRange(hsv, lo, hi) {
   const l = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...lo, 0]);
   const h = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...hi, 0]);
@@ -37,6 +48,7 @@ function inRange(hsv, lo, hi) {
   l.delete(); h.delete();
   return out;
 }
+
 function morph(mask, op, size) {
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(size, size));
   const out = new cv.Mat();
@@ -45,6 +57,7 @@ function morph(mask, op, size) {
   k.delete();
   return out;
 }
+
 function findLeafRegions(rgb) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
@@ -65,6 +78,8 @@ function findLeafRegions(rgb) {
   regions.sort((a, b) => b.area - a.area);
   return regions.slice(0, MAX_LEAVES);
 }
+
+// ---------- Model helpers ----------
 function toTensor(rgbCrop) {
   const r = new cv.Mat();
   cv.resize(rgbCrop, r, new cv.Size(224, 224), 0, 0, cv.INTER_AREA);
@@ -75,15 +90,20 @@ function toTensor(rgbCrop) {
   r.delete();
   return new ort.Tensor('float32', out, [1, 3, 224, 224]);
 }
+
 function softmax(a) {
   const m = Math.max(...a), e = a.map(v => Math.exp(v - m)), s = e.reduce((x, y) => x + y);
   return e.map(v => v / s);
 }
+
 async function predict(sess, tensor) {
   const o = await sess.run({ input: tensor });
   return softmax(Array.from(o.logits.data));
 }
-function infectionRatio(rgbCrop) {
+
+// Infection ratio + leaf outline (red) + lesion overlay (red tint) for one leaf crop.
+// Caller must delete leafVis and lesionVis.
+function analyzeLeaf(rgbCrop) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
   const g = inRange(hsv, [35, 40, 40], [85, 255, 255]);
@@ -96,9 +116,75 @@ function infectionRatio(rgbCrop) {
   const les = new cv.Mat(); cv.bitwise_and(les0, leaf, les);
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
-  [hsv, g, dis, l0, l1, leaf, dark, les0, les].forEach(m => m.delete());
-  return ratio;
+
+  // Leaf outline (red)
+  const leafVis = rgbCrop.clone();
+  const contours = new cv.MatVector(), hier = new cv.Mat();
+  cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  cv.drawContours(leafVis, contours, -1, new cv.Scalar(255, 0, 0, 255),
+                  Math.max(2, Math.floor(rgbCrop.cols / 300)));
+
+  // Lesion overlay (red tint)
+  const lesionVis = rgbCrop.clone();
+  const d = lesionVis.data, m = les.data;
+  for (let i = 0; i < m.length; i++) {
+    if (m[i]) {
+      d[i * 3] = 0.4 * d[i * 3] + 0.6 * 255;
+      d[i * 3 + 1] = 0.4 * d[i * 3 + 1];
+      d[i * 3 + 2] = 0.4 * d[i * 3 + 2];
+    }
+  }
+
+  [hsv, g, dis, l0, l1, leaf, dark, les0, les, hier].forEach(x => x.delete());
+  contours.delete();
+  return { ratio, leafVis, lesionVis };
 }
+
+// ---------- Extra output canvases (created automatically, no HTML change needed) ----------
+function showMat(id, title, mat) {
+  let wrap = $('wrap-' + id);
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'wrap-' + id;
+    wrap.style.margin = '12px 0';
+    const cap = document.createElement('div');
+    cap.textContent = title;
+    cap.style.fontWeight = 'bold';
+    cap.style.marginBottom = '4px';
+    const c = document.createElement('canvas');
+    c.id = id;
+    c.style.maxWidth = '100%';
+    wrap.append(cap, c);
+    $('report').parentNode.appendChild(wrap);
+  }
+  wrap.hidden = false;
+  cv.imshow($(id), mat);
+}
+
+function hideCanvas(id) {
+  const wrap = $('wrap-' + id);
+  if (wrap) wrap.hidden = true;
+}
+
+// ---------- Report ----------
+function confLine(labelHtml, conf) {
+  return `${labelHtml} (Confidence ${(conf * 100).toFixed(1)}%)`;
+}
+
+function banner(status, msg, ratio) {
+  const color = STATUS_COLORS[status] || '#2c2c2c';
+  let bar = '';
+  if (ratio !== undefined) {
+    const v = Math.max(0, Math.min(100, ratio));
+    bar = `<p><b>SEVERITY SCORE: [${v.toFixed(1)}%]</b></p>
+      <div style="position:relative"><div style="position:absolute;left:${v}%;top:-18px;transform:translateX(-50%)">▲</div>
+      <div class="bar"><div style="background:#27ae60"></div><div style="background:#f39c12"></div><div style="background:#c0392b"></div></div></div>`;
+  }
+  return `<p><b>DIAGNOSIS STATUS: <span style="color:${color}">[${status}]</span></b></p>${bar}` +
+         `<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
+}
+
+// ---------- Main ----------
 async function diagnose(file) {
   $('status').textContent = 'Analyzing…';
   try {
@@ -110,9 +196,14 @@ async function diagnose(file) {
     ctx.drawImage(bmp, 0, 0, view.width, view.height);
     const rgba = cv.imread(view), rgb = new cv.Mat();
     cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
+    rgba.delete();
+
     const regions = findLeafRegions(rgb);
+
+    // Detected leaf regions (red boxes) are drawn on the main canvas
     ctx.lineWidth = Math.max(2, view.width / 300);
     ctx.strokeStyle = '#ff0000'; ctx.fillStyle = '#ff0000'; ctx.font = 'bold 28px Arial';
+
     const results = [];
     let idx = 0;
     for (const r of regions) {
@@ -122,39 +213,71 @@ async function diagnose(file) {
       const crop = rgb.roi(new cv.Rect(r.x, r.y, r.w, r.h));
       const t = toTensor(crop);
       const p1 = await predict(sess1, t);
-      if (p1[M1_TOMATO] >= MIN_CONF) {
+      const tomatoConf = p1[M1_TOMATO];
+      if (tomatoConf >= MIN_CONF) {
         const p2 = await predict(sess2, t);
-        const blight = p1[M1_TOMATO] * p2[M2_BLIGHT];
-        const not = p1[M1_TOMATO] * (1 - p2[M2_BLIGHT]);
-        results.push({ top: blight >= not ? 'blight' : 'not', conf: Math.max(blight, not), crop: crop.clone() });
+        const lb = p2[M2_BLIGHT], nlb = 1 - lb;
+        const stage2Conf = Math.max(lb, nlb);
+        results.push({
+          top: lb >= nlb ? 'blight' : 'not',
+          tomatoConf,                    // Stage 1: confidence it is a tomato leaf
+          stage2Conf,                    // Stage 2: confidence of late blight / no late blight
+          score: tomatoConf * stage2Conf,
+          crop: crop.clone(),
+        });
       } else {
-        results.push({ top: 'non', conf: p1[1 - M1_TOMATO] });
+        const nt = p1[1 - M1_TOMATO];    // Stage 1: confidence it is NOT a tomato leaf
+        results.push({ top: 'non', nonTomatoConf: nt, score: nt });
       }
       crop.delete();
     }
-    rgba.delete(); rgb.delete();
+
     const tomato = results.filter(r => r.top !== 'non');
     const blighted = tomato.filter(r => r.top === 'blight');
+    const note = ` (Checked ${regions.length} leaf region(s))`;
     let html;
+
     if (!regions.length) {
-      html = banner('non-tomato', '🚫 No leaf regions detected. Please photograph a clear leaf.');
+      // 1) No leaf region found -> not a tomato (models were not run, so no confidence)
+      html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
+      showMat('out-analyzed', 'Analyzed Image', rgb);
+      hideCanvas('out-leafmask');
     } else if (!tomato.length) {
-      html = banner('non-tomato', '🚫 Leaves detected, but none are tomato leaves.');
+      // 2) No region is a tomato leaf -> not a tomato, with confidence
+      const ch = results.reduce((a, b) => (b.score > a.score ? b : a));
+      html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', ch.nonTomatoConf)}.${note}`);
+      showMat('out-analyzed', 'Analyzed Image', rgb);
+      hideCanvas('out-leafmask');
     } else if (!blighted.length) {
-      const c = Math.max(...tomato.map(r => r.conf));
+      // 3) Tomato, but no late blight: tomato confidence + "no late blight" confidence
+      const ch = tomato.reduce((a, b) => (b.score > a.score ? b : a));
+      const { leafVis, lesionVis } = analyzeLeaf(ch.crop);
       html = banner('tomato-without-late-blight',
-        `✅ Tomato leaf, no late blight detected (confidence ${(c * 100).toFixed(1)}%).`);
+        `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
+        `${confLine('<b>No late blight detected</b>', ch.stage2Conf)}.${note}`);
+      showMat('out-analyzed', 'Analyzed Image', rgb);
+      showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
+      leafVis.delete(); lesionVis.delete();
     } else {
-      const ch = blighted.reduce((a, b) => (b.conf > a.conf ? b : a));
-      const ratio = infectionRatio(ch.crop);
-      const msg = ratio < 33.3
-        ? 'Mild late blight. Remove infected leaves and apply an organic copper fungicide.'
+      // 4) Tomato with late blight: both confidences + severity and advice
+      const ch = blighted.reduce((a, b) => (b.score > a.score ? b : a));
+      const { ratio, leafVis, lesionVis } = analyzeLeaf(ch.crop);
+      const advice = ratio < 33.3
+        ? 'Mild late blight. Remove infected leaves promptly and apply an organic copper fungicide.'
         : ratio < 66.6
-          ? 'Moderate late blight. Isolate the plant, remove infected foliage, use a systemic fungicide.'
-          : '🚨 Severe late blight! Remove and destroy the plant to prevent spore spread.';
-      html = banner('tomato-with-late-blight', msg, ratio);
+          ? 'Moderate late blight. Isolate the plant, remove infected foliage, and use a systemic fungicide.'
+          : '🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.';
+      html = banner('tomato-with-late-blight',
+        `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
+        `${confLine('⚠️ <b>Late blight detected</b>', ch.stage2Conf)}<br>` +
+        `${advice}${note}`, ratio);
+      showMat('out-analyzed', 'Analyzed Image', lesionVis);
+      showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
+      leafVis.delete(); lesionVis.delete();
     }
+
     results.forEach(r => r.crop && r.crop.delete());
+    rgb.delete();
     $('report').innerHTML = html;
     $('report').hidden = false;
     $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
@@ -163,15 +286,6 @@ async function diagnose(file) {
     console.error(err);
   }
 }
-function banner(status, msg, ratio) {
-  let bar = '';
-  if (ratio !== undefined) {
-    const v = Math.max(0, Math.min(100, ratio));
-    bar = `<p><b>SEVERITY SCORE: [${v.toFixed(1)}%]</b></p>
-      <div style="position:relative"><div style="position:absolute;left:${v}%;top:-18px;transform:translateX(-50%)">▲</div>
-      <div class="bar"><div style="background:#27ae60"></div><div style="background:#f39c12"></div><div style="background:#c0392b"></div></div></div>`;
-  }
-  return `<p><b>DIAGNOSIS STATUS: [${status}]</b></p>${bar}<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
-}
+
 $('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
 init();
