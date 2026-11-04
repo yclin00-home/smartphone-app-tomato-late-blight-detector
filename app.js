@@ -1,7 +1,11 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
-const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
-const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output
+
+// 與 Python 的 classes_json 對應的類別名稱（請根據你實際的訓練類別調整順序）
+// 假設 Model 1 類別為 ['Non_tomato', 'Tomato']
+// 假設 Model 2 類別為 ['Late_blight', 'Not_late_blight']
+let CLASSES_M1 = ['Non_tomato', 'Tomato'];
+let CLASSES_M2 = ['Late_blight', 'Not_late_blight'];
 
 // Status colors: only late blight is red; everything else is neutral
 const STATUS_COLORS = {
@@ -25,12 +29,17 @@ async function init() {
     }
     ort.env.wasm.wasmPaths = './';
     ort.env.wasm.numThreads = 1;
+    
     step = '2/3 Loading model 1 (ONNX Runtime)';
     $('status').textContent = step + '…';
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
+    
     step = '3/3 Loading model 2';
     $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
+    
+    // 如果有需要，也可以在這裡透過 fetch("m1_classes.json") 動態載入類別名稱陣列
+    
     $('status').textContent = 'Ready. Take or choose a photo.';
     $('file').disabled = false;
   } catch (err) {
@@ -96,10 +105,16 @@ function softmax(a) {
   return e.map(v => v / s);
 }
 
-async function predict(sess, tensor) {
+async function predict(sess, names, tensor) {
   const o = await sess.run({ input: tensor });
-  return softmax(Array.from(o.logits.data));
+  const p = softmax(Array.from(o.logits.data));
+  let res = {};
+  names.forEach((n, i) => { res[n] = float(p[i]); });
+  return res;
 }
+
+// 輔助 JS 的 float 轉型
+function float(v) { return Number(v); }
 
 function keepBigComponents(mask) {
   const labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
@@ -174,7 +189,7 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- 徹底修復：強制回傳純粹的原生 Canvas DOM 元素 ----------
+// ---------- UI 輔助 ----------
 function getCanvas(id, title) {
   let c = document.getElementById(id);
   let wrap = document.getElementById('wrap-' + id);
@@ -213,12 +228,7 @@ function getCanvas(id, title) {
   }
   
   wrap.hidden = false;
-  return c; // 絕對確保回傳的是標準 HTMLCanvasElement
-}
-
-function showMat(id, title, mat) { 
-  const canvasEl = getCanvas(id, title);
-  cv.imshow(canvasEl, mat); 
+  return c;
 }
 
 function hideCanvas(id) {
@@ -244,7 +254,7 @@ function banner(status, msg, ratio) {
          `<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
 }
 
-// ---------- Main ----------
+// ---------- Main Diagnose (完全對齊 Python 版邏輯) ----------
 async function diagnose(file) {
   $('status').textContent = 'Analyzing…';
   try {
@@ -266,74 +276,114 @@ async function diagnose(file) {
     bctx.lineWidth = Math.max(2, bc.width / 300);
     bctx.strokeStyle = '#ff0000'; bctx.fillStyle = '#ff0000'; bctx.font = 'bold 28px Arial';
 
+    let tomato_found = false;
     const results = [];
     let idx = 0;
+
     for (const r of regions) {
       idx++;
       bctx.strokeRect(r.x, r.y, r.w, r.h);
       bctx.fillText(String(idx), r.x + 8, r.y + 34);
       const crop = rgb.roi(new cv.Rect(r.x, r.y, r.w, r.h));
+      if (crop.size().width === 0 || crop.size().height === 0) {
+        crop.delete();
+        continue;
+      }
+
       const t = toTensor(crop);
-      const p1 = await predict(sess1, t);
-      const tomatoConf = p1[M1_TOMATO];
-      if (tomatoConf >= MIN_CONF) {
-        const p2 = await predict(sess2, t);
-        const lb = p2[M2_BLIGHT], nlb = 1 - lb;
-        const stage2Conf = Math.max(lb, nlb);
+      const p1 = await predict(sess1, CLASSES_M1, t);
+      const tomato_conf = p1["Tomato"];
+
+      if (tomato_conf >= MIN_CONF) {
+        tomato_found = true;
+        const p2 = await predict(sess2, CLASSES_M2, t);
+        const lb_conf = p2["Late_blight"];
+        const nlb_conf = p2["Not_late_blight"];
+        
+        let top, stage2_conf;
+        if (lb_conf >= nlb_conf) {
+          top = "Late_blight";
+          stage2_conf = lb_conf;
+        } else {
+          top = "Not_late_blight";
+          stage2_conf = nlb_conf;
+        }
+        
         results.push({
-          top: lb >= nlb ? 'blight' : 'not',
-          tomatoConf,
-          stage2Conf,
-          score: tomatoConf * stage2Conf,
+          top: top,
+          tomato_conf: tomato_conf,
+          stage2_conf: stage2_conf,
+          score: tomato_conf * stage2_conf,
           crop: crop.clone(),
         });
       } else {
-        const nt = p1[1 - M1_TOMATO];
-        results.push({ top: 'non', nonTomatoConf: nt, score: nt });
+        results.push({
+          top: "Non_tomato",
+          tomato_conf: tomato_conf,
+          stage2_conf: null,
+          non_tomato_conf: p1["Non_tomato"],
+          score: p1["Non_tomato"],
+          crop: crop.clone(),
+        });
       }
       crop.delete();
     }
 
-    const tomato = results.filter(r => r.top !== 'non');
-    const blighted = tomato.filter(r => r.top === 'blight');
     const note = ` (Checked ${regions.length} leaf region(s))`;
     let html;
 
+    // 1) No leaf region found -> not a tomato
     if (!regions.length) {
       html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
-    } else if (!tomato.length) {
-      const ch = results.reduce((a, b) => (b.score > a.score ? b : a));
-      html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', ch.nonTomatoConf)}.${note}`);
+    } 
+    // 2) No region is a tomato leaf -> not a tomato, with confidence
+    else if (!tomato_found) {
+      const chosen = results.reduce((a, b) => (b.score > a.score ? b : a));
+      html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', chosen.non_tomato_conf)}.${note}`);
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
-    } else if (!blighted.length) {
-      const ch = tomato.reduce((a, b) => (b.score > a.score ? b : a));
-      const { leafVis } = analyzeLeaf(ch.crop);
-      html = banner('tomato-without-late-blight',
-        `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
-        `${confLine('<b>No late blight detected</b>', ch.stage2Conf)}.${note}`);
-      
-      cv.imshow($('view'), rgb);
-      showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
-      leafVis.delete();
-    } else {
-      const ch = blighted.reduce((a, b) => (b.score > a.score ? b : a));
-      const { ratio, leafVis, lesionVis } = analyzeLeaf(ch.crop);
-      const advice = ratio < 33.3
-        ? 'Mild late blight. Remove infected leaves promptly and apply an organic copper fungicide.'
-        : ratio < 66.6
-          ? 'Moderate late blight. Isolate the plant, remove infected foliage, and use a systemic fungicide.'
-          : '🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.';
-      html = banner('tomato-with-late-blight',
-        `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
-        `${confLine('⚠️ <b>Late blight detected</b>', ch.stage2Conf)}<br>` +
-        `${advice}${note}`, ratio);
-      
-      cv.imshow($('view'), lesionVis);
-      showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
-      leafVis.delete(); lesionVis.delete();
+    } 
+    else {
+      const tomato_results = results.filter(res => res.top === "Late_blight" || res.top === "Not_late_blight");
+      const blighted = tomato_results.filter(res => res.top === "Late_blight");
+
+      let chosen, label;
+      if (blighted.length > 0) {
+        chosen = blighted.reduce((a, b) => (b.score > a.score ? b : a));
+        label = "Late_blight";
+      } else {
+        chosen = tomato_results.reduce((a, b) => (b.score > a.score ? b : a));
+        label = "Not_late_blight";
+      }
+
+      const tomato_line = confLine('🍅 <b>Tomato leaf</b>', chosen.tomato_conf);
+      const { ratio, leafVis, lesionVis } = analyzeLeaf(chosen.crop);
+
+      // 3) Tomato, but no late blight
+      if (label === "Not_late_blight") {
+        const lb_line = confLine('<b>No late blight detected</b>', chosen.stage2_conf);
+        html = banner('tomato-without-late-blight', `${tomato_line}<br>${lb_line}.${note}`);
+        cv.imshow($('view'), rgb);
+        showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
+      } 
+      // 4) Tomato with late blight
+      else {
+        const lb_line = confLine('⚠️ <b>Late blight detected</b>', chosen.stage2_conf);
+        let advice = "";
+        if (ratio < 33.3) {
+          advice = "Mild late blight. Remove infected leaves promptly and apply an organic copper fungicide.";
+        } else if (ratio < 66.6) {
+          advice = "Moderate late blight. Isolate the plant, remove infected foliage, and use a systemic fungicide.";
+        } else {
+          advice = "🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.";
+        }
+        html = banner('tomato-with-late-blight', `${tomato_line}<br>${lb_line}<br>${advice}${note}`, ratio);
+        cv.imshow($('view'), lesionVis);
+        showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
+        leafVis.delete(); lesionVis.delete();
+      }
     }
 
     results.forEach(r => r.crop && r.crop.delete());
@@ -345,6 +395,11 @@ async function diagnose(file) {
     $('status').textContent = 'Error while analyzing: ' + (err.message || err);
     console.error(err);
   }
+}
+
+function showMat(id, title, mat) {  
+  const canvasEl = getCanvas(id, title);
+  cv.imshow(canvasEl, mat);  
 }
 
 $('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
