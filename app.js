@@ -129,9 +129,9 @@ function analyzeLeaf(rgbCrop) {
 
   const dark = inRange(hsv, [0, 0, 0], [180, 255, 80]);
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
-  const les1 = new cv.bitwise_and(les0, leaf, les0);
+  const les1 = cv.bitwise_and(les0, leaf, les0);
   
-  // 【關鍵修正】對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊（小紅線）
+  // 對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊
   const les = morph(les1, cv.MORPH_OPEN, 3);
   les1.delete(); les0.delete();
 
@@ -158,7 +158,7 @@ function analyzeLeaf(rgbCrop) {
     const singleContour = new cv.MatVector();
     singleContour.push_back(contours.get(maxIdx));
     cv.drawContours(leafVis, singleContour, -1, new cv.Scalar(255, 0, 0, 255),
-                     Math.max(2, Math.floor(rgbCrop.cols / 300)));
+                    Math.max(2, Math.floor(rgbCrop.cols / 300)));
     singleContour.delete();
   }
 
@@ -178,32 +178,37 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- Output panels ----------
+// ---------- Output panels (已修復 Canvas 取得邏輯) ----------
 function getCanvas(id, title) {
-  let wrap = $('wrap-' + id);
-  if (!wrap) {
+  let c = $(id);
+  if (!c) {
     let det = $('expert');
     if (!det) {
       det = document.createElement('details');
       det.id = 'expert'; det.open = true; det.style.margin = '12px 0';
       const sum = document.createElement('summary');
-      sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
+      sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; 
+      sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
       const row = document.createElement('div');
       row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
       det.append(sum, row);
       $('report').insertAdjacentElement('afterend', det);
     }
-    wrap = document.createElement('div');
-    wrap.id = 'wrap-' + id; wrap.style.cssText = 'flex:1 1 320px;min-width:0';
-    const cap = document.createElement('div');
-    cap.textContent = title; cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
-    const c = document.createElement('canvas');
-    c.id = id; c.style.maxWidth = '100%';
-    wrap.append(cap, c);
-    $('expert-row').appendChild(wrap);
+    let wrap = $('wrap-' + id);
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'wrap-' + id; wrap.style.cssText = 'flex:1 1 320px;min-width:0';
+      const cap = document.createElement('div');
+      cap.textContent = title; cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
+      c = document.createElement('canvas');
+      c.id = id; c.style.maxWidth = '100%';
+      wrap.append(cap, c);
+      $('expert-row').appendChild(wrap);
+    }
   }
-  wrap.hidden = false;
-  return $(id);
+  let wrap = $('wrap-' + id);
+  if (wrap) wrap.hidden = false;
+  return $(id); // 確保明確回傳原生 canvas DOM 元素
 }
 
 function showMat(id, title, mat) { cv.imshow(getCanvas(id, title), mat); }
@@ -296,19 +301,16 @@ async function diagnose(file) {
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!blighted.length) {
-      // 3) 健康或非晚疫病：顯示原圖（不套用病斑紅色高亮），只秀葉片外框
       const ch = tomato.reduce((a, b) => (b.score > a.score ? b : a));
       const { leafVis } = analyzeLeaf(ch.crop);
       html = banner('tomato-without-late-blight',
         `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
         `${confLine('<b>No late blight detected</b>', ch.stage2Conf)}.${note}`);
       
-      // 【修改重點】這裡直接顯示原圖（或乾淨的 rgb 檢視畫面），而不是病斑高亮圖
       cv.imshow($('view'), rgb);
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       leafVis.delete();
     } else {
-      // 4) 確診晚疫病：才套用病斑紅色高亮遮罩
       const ch = blighted.reduce((a, b) => (b.score > a.score ? b : a));
       const { ratio, leafVis, lesionVis } = analyzeLeaf(ch.crop);
       const advice = ratio < 33.3
