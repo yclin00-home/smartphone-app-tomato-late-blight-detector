@@ -9,28 +9,46 @@ const $ = id => document.getElementById(id);
 async function init() {
   let step = '';
   try {
-    step = '1/3 Loading OpenCV';
+    step = '1/3 載入 OpenCV';
     $('status').textContent = step + '…';
-    if (window.cv instanceof Promise) {
-      window.cv = await window.cv;
-    } else if (!window.cv.Mat) {
-      await new Promise(r => { window.cv['onRuntimeInitialized'] = r; });
-    }
+
+    // 穩固的 OpenCV.js 載入防護機制（專門解決 GitHub Pages 非同步載入延遲問題）
+    await new Promise((resolve, reject) => {
+      let checkCount = 0;
+      const interval = setInterval(() => {
+        if (typeof cv !== 'undefined' && cv.Mat) {
+          clearInterval(interval);
+          resolve();
+        } else if (checkCount > 75) { // 超過 15 秒未載入則報錯
+          clearInterval(interval);
+          reject(new Error('OpenCV.js 載入逾時，請檢查網路連線或 CDN 是否被阻擋。'));
+        }
+        checkCount++;
+      }, 200);
+
+      if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
+        cv['onRuntimeInitialized'] = () => {
+          clearInterval(interval);
+          resolve();
+        };
+      }
+    });
+
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
     ort.env.wasm.numThreads = 1;
 
-    step = '2/3 Loading model 1 (ONNX Runtime)';
+    step = '2/3 載入模型 1 (Tomato)';
     $('status').textContent = step + '…';
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
 
-    step = '3/3 Loading model 2';
+    step = '3/3 載入模型 2 (Late Blight)';
     $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
 
-    $('status').textContent = 'Ready. Take or choose a photo.';
+    $('status').textContent = '系統就緒，請上傳或拍攝番茄葉片照片。';
     $('file').disabled = false;
   } catch (err) {
-    $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
+    $('status').textContent = '步驟 ' + step + ' 發生錯誤: ' + (err.message || err);
     console.error(err);
   }
 }
