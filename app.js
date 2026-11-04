@@ -140,26 +140,36 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- Extra output canvases (created automatically, no HTML change needed) ----------
-function showMat(id, title, mat) {
+// ---------- Output panels (created automatically, same as the Python version) ----------
+// "Analyzed Image" = the main #view canvas. The two expert panels sit in an open <details> block.
+function getCanvas(id, title) {
   let wrap = $('wrap-' + id);
   if (!wrap) {
+    let det = $('expert');
+    if (!det) {
+      det = document.createElement('details');
+      det.id = 'expert'; det.open = true; det.style.margin = '12px 0';
+      const sum = document.createElement('summary');
+      sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
+      const row = document.createElement('div');
+      row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
+      det.append(sum, row);
+      $('report').insertAdjacentElement('afterend', det);
+    }
     wrap = document.createElement('div');
-    wrap.id = 'wrap-' + id;
-    wrap.style.margin = '12px 0';
+    wrap.id = 'wrap-' + id; wrap.style.cssText = 'flex:1 1 320px;min-width:0';
     const cap = document.createElement('div');
-    cap.textContent = title;
-    cap.style.fontWeight = 'bold';
-    cap.style.marginBottom = '4px';
+    cap.textContent = title; cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
     const c = document.createElement('canvas');
-    c.id = id;
-    c.style.maxWidth = '100%';
+    c.id = id; c.style.maxWidth = '100%';
     wrap.append(cap, c);
-    $('report').parentNode.appendChild(wrap);
+    $('expert-row').appendChild(wrap);
   }
   wrap.hidden = false;
-  cv.imshow($(id), mat);
+  return $(id);
 }
+
+function showMat(id, title, mat) { cv.imshow(getCanvas(id, title), mat); }
 
 function hideCanvas(id) {
   const wrap = $('wrap-' + id);
@@ -200,16 +210,19 @@ async function diagnose(file) {
 
     const regions = findLeafRegions(rgb);
 
-    // Detected leaf regions (red boxes) are drawn on the main canvas
-    ctx.lineWidth = Math.max(2, view.width / 300);
-    ctx.strokeStyle = '#ff0000'; ctx.fillStyle = '#ff0000'; ctx.font = 'bold 28px Arial';
+    // Detected leaf regions (red boxes) get their own panel, like the Python version
+    const bc = getCanvas('out-boxes', 'Detected Leaf Regions (Red Boxes)');
+    cv.imshow(bc, rgb);
+    const bctx = bc.getContext('2d');
+    bctx.lineWidth = Math.max(2, bc.width / 300);
+    bctx.strokeStyle = '#ff0000'; bctx.fillStyle = '#ff0000'; bctx.font = 'bold 28px Arial';
 
     const results = [];
     let idx = 0;
     for (const r of regions) {
       idx++;
-      ctx.strokeRect(r.x, r.y, r.w, r.h);
-      ctx.fillText(String(idx), r.x + 8, r.y + 34);
+      bctx.strokeRect(r.x, r.y, r.w, r.h);
+      bctx.fillText(String(idx), r.x + 8, r.y + 34);
       const crop = rgb.roi(new cv.Rect(r.x, r.y, r.w, r.h));
       const t = toTensor(crop);
       const p1 = await predict(sess1, t);
@@ -240,13 +253,13 @@ async function diagnose(file) {
     if (!regions.length) {
       // 1) No leaf region found -> not a tomato (models were not run, so no confidence)
       html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
-      showMat('out-analyzed', 'Analyzed Image', rgb);
+      cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!tomato.length) {
       // 2) No region is a tomato leaf -> not a tomato, with confidence
       const ch = results.reduce((a, b) => (b.score > a.score ? b : a));
       html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', ch.nonTomatoConf)}.${note}`);
-      showMat('out-analyzed', 'Analyzed Image', rgb);
+      cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!blighted.length) {
       // 3) Tomato, but no late blight: tomato confidence + "no late blight" confidence
@@ -255,7 +268,7 @@ async function diagnose(file) {
       html = banner('tomato-without-late-blight',
         `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
         `${confLine('<b>No late blight detected</b>', ch.stage2Conf)}.${note}`);
-      showMat('out-analyzed', 'Analyzed Image', rgb);
+      cv.imshow($('view'), rgb);
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       leafVis.delete(); lesionVis.delete();
     } else {
@@ -271,7 +284,7 @@ async function diagnose(file) {
         `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
         `${confLine('⚠️ <b>Late blight detected</b>', ch.stage2Conf)}<br>` +
         `${advice}${note}`, ratio);
-      showMat('out-analyzed', 'Analyzed Image', lesionVis);
+      cv.imshow($('view'), lesionVis);
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       leafVis.delete(); lesionVis.delete();
     }
