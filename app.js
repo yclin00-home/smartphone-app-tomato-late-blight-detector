@@ -115,7 +115,6 @@ function keepBigComponents(mask) {
   return out;
 }
 
-// 分析單一葉片：計算感染比例、畫出乾淨的外框、以及過濾掉葉脈雜訊的病斑高亮
 function analyzeLeaf(rgbCrop) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
@@ -131,14 +130,12 @@ function analyzeLeaf(rgbCrop) {
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
   const les1 = cv.bitwise_and(les0, leaf, les0);
   
-  // 對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊（小紅線）
   const les = morph(les1, cv.MORPH_OPEN, 3);
   les1.delete(); les0.delete();
 
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
 
-  // 1. 葉片外框 (只取最大外輪廓，避免內部雜訊)
   const leafVis = rgbCrop.clone();
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -162,7 +159,6 @@ function analyzeLeaf(rgbCrop) {
     singleContour.delete();
   }
 
-  // 2. 病斑高亮遮罩 (紅色半透明)
   const lesionVis = rgbCrop.clone();
   const d = lesionVis.data, m = les.data;
   for (let i = 0; i < m.length; i++) {
@@ -178,11 +174,13 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- Output panels (已修正，絕對回傳 DOM 上的原生 canvas) ----------
+// ---------- 徹底修復：強制回傳純粹的原生 Canvas DOM 元素 ----------
 function getCanvas(id, title) {
-  let c = $(id);
-  if (!c) {
-    let det = $('expert');
+  let c = document.getElementById(id);
+  let wrap = document.getElementById('wrap-' + id);
+
+  if (!c || !wrap) {
+    let det = document.getElementById('expert');
     if (!det) {
       det = document.createElement('details');
       det.id = 'expert'; det.open = true; det.style.margin = '12px 0';
@@ -192,10 +190,9 @@ function getCanvas(id, title) {
       const row = document.createElement('div');
       row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
       det.append(sum, row);
-      $('report').insertAdjacentElement('afterend', det);
+      document.getElementById('report').insertAdjacentElement('afterend', det);
     }
     
-    let wrap = $('wrap-' + id);
     if (!wrap) {
       wrap = document.createElement('div');
       wrap.id = 'wrap-' + id; 
@@ -203,27 +200,29 @@ function getCanvas(id, title) {
       const cap = document.createElement('div');
       cap.textContent = title; 
       cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
-      
+      wrap.appendChild(cap);
+      document.getElementById('expert-row').appendChild(wrap);
+    }
+
+    if (!c) {
       c = document.createElement('canvas');
       c.id = id; 
       c.style.maxWidth = '100%';
-      
-      wrap.append(cap, c);
-      $('expert-row').appendChild(wrap);
-    } else {
-      c = wrap.querySelector('canvas');
+      wrap.appendChild(c);
     }
   }
   
-  let wrap = $('wrap-' + id);
-  if (wrap) wrap.hidden = false;
-  return c;
+  wrap.hidden = false;
+  return c; // 絕對確保回傳的是標準 HTMLCanvasElement
 }
 
-function showMat(id, title, mat) { cv.imshow(getCanvas(id, title), mat); }
+function showMat(id, title, mat) { 
+  const canvasEl = getCanvas(id, title);
+  cv.imshow(canvasEl, mat); 
+}
 
 function hideCanvas(id) {
-  const wrap = $('wrap-' + id);
+  const wrap = document.getElementById('wrap-' + id);
   if (wrap) wrap.hidden = true;
 }
 
