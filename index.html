@@ -1,31 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="manifest" href="manifest.json">
-<link rel="apple-touch-icon" href="icon-180.png">
-<title>Tomato Leaf Diagnosis</title>
-<style>
-  body{font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:16px;background:#fafafa}
-  button,input{font-size:18px;margin:8px 0}
-  canvas{max-width:100%;border-radius:8px}
-  #report{background:#f4f1ea;border:2px solid #dcd6cd;border-radius:12px;padding:16px;margin-top:12px}
-  .bar{display:flex;height:22px;border-radius:6px;overflow:hidden}
-  .bar div{flex:1}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tomato Disease Report v2</title>
+    <!-- 全域 CSS：強制卡片樣式與文字顏色，解決深色模式隱形問題 -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #fdfbf7;
+            color: #2c2c2c;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .upload-section {
+            margin-bottom: 20px;
+        }
+        .outputs-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .output-box {
+            flex: 1;
+            min-width: 300px;
+            background: #fff;
+            padding: 15px;
+            border: 1px solid #dcd6cd;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .output-box h3 {
+            margin-top: 0;
+            font-size: 16px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin-top: 10px;
+            border-radius: 4px;
+        }
+        /* Python 報告卡片樣式 */
+        .custom-report-card {
+            background-color: #f4f1ea !important;
+            border: 2px solid #dcd6cd !important;
+            border-radius: 10px !important;
+            padding: 15px !important;
+            margin-bottom: 12px !important;
+            font-family: Arial, sans-serif !important;
+        }
+        .custom-report-card, .custom-report-card *, .custom-report-card span, .custom-report-card b {
+            color: #2c2c2c !important;
+        }
+        #status {
+            font-weight: bold;
+            color: #27ae60;
+            margin-bottom: 15px;
+        }
+    </style>
 </head>
 <body>
-<h2>🍅 Tomato Leaf Disease Diagnosis</h2>
-<p id="status">Loading models…</p>
-<input id="file" type="file" accept="image/*" disabled>
-<canvas id="view"></canvas>
-<div id="report" hidden></div>
-<script src="opencv.js"></script>
-<script src="ort.min.js"></script>
-<script src="app.js"></script>
-<script>
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
-</script>
+
+    <h1>🍅 Tomato Late Blight Intelligent Diagnosis System</h1>
+    <div class="subtitle">Upload an image to automatically outline true leaf contours, display lesion highlights, and review detailed confidence scores.</div>
+
+    <!-- 狀態顯示 -->
+    <div id="status">Loading system...</div>
+
+    <!-- 檔案上傳 -->
+    <div class="upload-section">
+        <input type="file" id="file" accept="image/*" disabled>
+    </div>
+
+    <!-- 輸出畫面：左右並排的兩張圖 -->
+    <div class="outputs-row">
+        <div class="output-box">
+            <h3>1. True Leaf Edge Outlines</h3>
+            <canvas id="view-outlines"></canvas>
+        </div>
+        <div class="output-box">
+            <h3>2. Lesion Highlight (Late Blight Only)</h3>
+            <canvas id="view-lesion"></canvas>
+        </div>
+    </div>
+
+    <!-- 詳細診斷報告區塊 -->
+    <div id="report" hidden></div>
+
+    <!-- 載入 ONNX Runtime 與 OpenCV -->
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
+    
+    <!-- 引入你寫好的 JavaScript 檔案 -->
+    <script src="script.js"></script>
 </body>
 </html>
