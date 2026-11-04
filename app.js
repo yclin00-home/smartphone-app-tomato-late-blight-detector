@@ -17,6 +17,7 @@ async function init() {
   let step = '';
   try {
     step = '1/3 Loading OpenCV';
+    console.log('[DEBUG init] ' + step);
     if ($('status')) $('status').textContent = step + '…';
     if (window.cv instanceof Promise) {
       window.cv = await window.cv;
@@ -26,45 +27,41 @@ async function init() {
     ort.env.wasm.wasmPaths = './';
     ort.env.wasm.numThreads = 1;
     
-    step = '2/3 Loading model 1 (ONNX Runtime)';
-    if ($('status')) $('status').textContent = step + '…';
+    step = '2/3 Loading model 1';
+    console.log('[DEBUG init] ' + step);
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
     
     step = '3/3 Loading model 2';
-    if ($('status')) $('status').textContent = step + '…';
+    console.log('[DEBUG init] ' + step);
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
     
+    console.log('[DEBUG init] Ready success');
     if ($('status')) $('status').textContent = 'Ready. Take or choose a photo.';
     if ($('file')) $('file').disabled = false;
   } catch (err) {
+    console.error('[DEBUG init ERROR at step: ' + step + ']', err);
     if ($('status')) $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
-    console.error(err);
   }
 }
 
-// 取得或安全建立 Canvas 的共用輔助函式（絕不回傳 undefined）
 function getSafeCanvas(id, title) {
+  console.log('[DEBUG getSafeCanvas] looking for:', id);
   let c = document.getElementById(id);
   if (!c) {
+    console.log('[DEBUG getSafeCanvas] creating new canvas for:', id);
     let det = document.getElementById('expert');
     if (!det) {
       det = document.createElement('details');
-      det.id = 'expert'; 
-      det.open = true; 
-      det.style.margin = '12px 0';
+      det.id = 'expert'; det.open = true; det.style.margin = '12px 0';
       const sum = document.createElement('summary');
       sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; 
       sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
       const row = document.createElement('div');
-      row.id = 'expert-row'; 
-      row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
+      row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
       det.append(sum, row);
       const rep = document.getElementById('report');
-      if (rep) {
-        rep.insertAdjacentElement('afterend', det);
-      } else {
-        document.body.appendChild(det);
-      }
+      if (rep) rep.insertAdjacentElement('afterend', det);
+      else document.body.appendChild(det);
     }
     
     let wrap = document.getElementById('wrap-' + id);
@@ -73,16 +70,14 @@ function getSafeCanvas(id, title) {
       wrap.id = 'wrap-' + id; 
       wrap.style.cssText = 'flex:1 1 320px;min-width:0';
       const cap = document.createElement('div');
-      cap.textContent = title; 
-      cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
+      cap.textContent = title; cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
       wrap.appendChild(cap);
       let expertRow = document.getElementById('expert-row');
       if (expertRow) expertRow.appendChild(wrap);
     }
 
     c = document.createElement('canvas');
-    c.id = id; 
-    c.style.maxWidth = '100%';
+    c.id = id; c.style.maxWidth = '100%';
     wrap.appendChild(c);
   }
   let wrap = document.getElementById('wrap-' + id);
@@ -95,7 +90,6 @@ function hideCanvas(id) {
   if (wrap) wrap.hidden = true;
 }
 
-// OpenCV 影像處理輔助
 function inRange(hsv, lo, hi) {
   const l = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...lo, 0]);
   const h = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...hi, 0]);
@@ -114,6 +108,7 @@ function morph(mask, op, size) {
 }
 
 function findLeafRegions(rgb) {
+  console.log('[DEBUG findLeafRegions] start');
   const hsv = new cv.Mat();
   cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
   const green = inRange(hsv, [35, 20, 20], [85, 255, 255]);
@@ -131,6 +126,7 @@ function findLeafRegions(rgb) {
   }
   [hsv, green, brown, mask0, m1, mask, labels, stats, cents].forEach(m => m.delete());
   regions.sort((a, b) => b.area - a.area);
+  console.log('[DEBUG findLeafRegions] found regions:', regions.length);
   return regions.slice(0, MAX_LEAVES);
 }
 
@@ -173,6 +169,7 @@ function keepBigComponents(mask) {
 }
 
 function analyzeLeaf(rgbCrop) {
+  console.log('[DEBUG analyzeLeaf] start');
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
   const g = inRange(hsv, [35, 40, 40], [85, 255, 255]);
@@ -221,6 +218,7 @@ function analyzeLeaf(rgbCrop) {
 
   [hsv, g, dis, l0, l1, leaf, dark, les, hier].forEach(x => x.delete());
   contours.delete();
+  console.log('[DEBUG analyzeLeaf] done, ratio:', ratio);
   return { ratio, leafVis, lesionVis };
 }
 
@@ -241,14 +239,14 @@ function banner(status, msg, ratio) {
          `<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
 }
 
-// 主診斷流程
 async function diagnose(file) {
+  console.log('[DEBUG diagnose] started with file:', file);
   if ($('status')) $('status').textContent = 'Analyzing…';
   try {
     const bmp = await createImageBitmap(file);
+    console.log('[DEBUG diagnose] image bitmap loaded, size:', bmp.width, 'x', bmp.height);
     const s = Math.min(1, MAX_INPUT_SIDE / Math.max(bmp.width, bmp.height));
     
-    // 安全取得 view 畫布，若無則自動建立
     let view = getSafeCanvas('view', 'Analyzed Image');
     view.width = Math.round(bmp.width * s); 
     view.height = Math.round(bmp.height * s);
@@ -259,6 +257,7 @@ async function diagnose(file) {
     rgba.delete();
 
     const regions = findLeafRegions(rgb);
+    console.log('[DEBUG diagnose] regions count:', regions.length);
 
     const bc = getSafeCanvas('out-boxes', 'Detected Leaf Regions (Red Boxes)');
     cv.imshow(bc, rgb);
@@ -272,6 +271,7 @@ async function diagnose(file) {
 
     for (const r of regions) {
       idx++;
+      console.log(`[DEBUG diagnose] processing region ${idx}:`, r);
       bctx.strokeRect(r.x, r.y, r.w, r.h);
       bctx.fillText(String(idx), r.x + 8, r.y + 34);
       const crop = rgb.roi(new cv.Rect(r.x, r.y, r.w, r.h));
@@ -281,11 +281,14 @@ async function diagnose(file) {
       }
 
       const t = toTensor(crop);
+      console.log(`[DEBUG diagnose] running model 1 for region ${idx}`);
       const p1 = await predict(sess1, CLASSES_M1, t);
       const tomato_conf = p1["Tomato"];
+      console.log(`[DEBUG diagnose] region ${idx} tomato_conf:`, tomato_conf);
 
       if (tomato_conf >= MIN_CONF) {
         tomato_found = true;
+        console.log(`[DEBUG diagnose] running model 2 for region ${idx}`);
         const p2 = await predict(sess2, CLASSES_M2, t);
         const lb_conf = p2["Late_blight"];
         const nlb_conf = p2["Not_late_blight"];
@@ -375,10 +378,11 @@ async function diagnose(file) {
     rep.innerHTML = html;
     rep.hidden = false;
     
+    console.log('[DEBUG diagnose] finished successfully');
     if ($('status')) $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
   } catch (err) {
+    console.error('[DEBUG diagnose EXCEPTION]:', err);
     if ($('status')) $('status').textContent = 'Error while analyzing: ' + (err.message || err);
-    console.error(err);
   }
 }
 
