@@ -1,13 +1,11 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 
-// 與 Python 的 classes_json 對應的類別名稱（請根據你實際的訓練類別調整順序）
-// 假設 Model 1 類別為 ['Non_tomato', 'Tomato']
-// 假設 Model 2 類別為 ['Late_blight', 'Not_late_blight']
+// 與 Python 的 classes_json 完全對齊的類別名稱
 let CLASSES_M1 = ['Non_tomato', 'Tomato'];
 let CLASSES_M2 = ['Late_blight', 'Not_late_blight'];
 
-// Status colors: only late blight is red; everything else is neutral
+// 狀態顏色：只有晚疫病為紅色，其餘維持中性色
 const STATUS_COLORS = {
   'non-tomato': '#555555',
   'tomato-without-late-blight': '#1e8449',
@@ -21,7 +19,7 @@ async function init() {
   let step = '';
   try {
     step = '1/3 Loading OpenCV';
-    $('status').textContent = step + '…';
+    if ($('status')) $('status').textContent = step + '…';
     if (window.cv instanceof Promise) {
       window.cv = await window.cv;
     } else if (!window.cv.Mat) {
@@ -31,24 +29,22 @@ async function init() {
     ort.env.wasm.numThreads = 1;
     
     step = '2/3 Loading model 1 (ONNX Runtime)';
-    $('status').textContent = step + '…';
+    if ($('status')) $('status').textContent = step + '…';
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
     
     step = '3/3 Loading model 2';
-    $('status').textContent = step + '…';
+    if ($('status')) $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
     
-    // 如果有需要，也可以在這裡透過 fetch("m1_classes.json") 動態載入類別名稱陣列
-    
-    $('status').textContent = 'Ready. Take or choose a photo.';
-    $('file').disabled = false;
+    if ($('status')) $('status').textContent = 'Ready. Take or choose a photo.';
+    if ($('file')) $('file').disabled = false;
   } catch (err) {
-    $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
+    if ($('status')) $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
     console.error(err);
   }
 }
 
-// ---------- OpenCV helpers ----------
+// ---------- OpenCV 輔助函式 ----------
 function inRange(hsv, lo, hi) {
   const l = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...lo, 0]);
   const h = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...hi, 0]);
@@ -88,7 +84,7 @@ function findLeafRegions(rgb) {
   return regions.slice(0, MAX_LEAVES);
 }
 
-// ---------- Model helpers ----------
+// ---------- 模型輔助函式 ----------
 function toTensor(rgbCrop) {
   const r = new cv.Mat();
   cv.resize(rgbCrop, r, new cv.Size(224, 224), 0, 0, cv.INTER_AREA);
@@ -109,12 +105,9 @@ async function predict(sess, names, tensor) {
   const o = await sess.run({ input: tensor });
   const p = softmax(Array.from(o.logits.data));
   let res = {};
-  names.forEach((n, i) => { res[n] = float(p[i]); });
+  names.forEach((n, i) => { res[n] = Number(p[i]); });
   return res;
 }
-
-// 輔助 JS 的 float 轉型
-function float(v) { return Number(v); }
 
 function keepBigComponents(mask) {
   const labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
@@ -189,7 +182,7 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- UI 輔助 ----------
+// ---------- UI 輔助與防呆處理 ----------
 function getCanvas(id, title) {
   let c = document.getElementById(id);
   let wrap = document.getElementById('wrap-' + id);
@@ -205,7 +198,12 @@ function getCanvas(id, title) {
       const row = document.createElement('div');
       row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
       det.append(sum, row);
-      document.getElementById('report').insertAdjacentElement('afterend', det);
+      const rep = document.getElementById('report');
+      if (rep) {
+        rep.insertAdjacentElement('afterend', det);
+      } else {
+        document.body.appendChild(det);
+      }
     }
     
     if (!wrap) {
@@ -216,7 +214,8 @@ function getCanvas(id, title) {
       cap.textContent = title; 
       cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
       wrap.appendChild(cap);
-      document.getElementById('expert-row').appendChild(wrap);
+      const expertRow = document.getElementById('expert-row');
+      if (expertRow) expertRow.appendChild(wrap);
     }
 
     if (!c) {
@@ -236,7 +235,7 @@ function hideCanvas(id) {
   if (wrap) wrap.hidden = true;
 }
 
-// ---------- Report ----------
+// ---------- 報告格式化 ----------
 function confLine(labelHtml, conf) {
   return `${labelHtml} (Confidence ${(conf * 100).toFixed(1)}%)`;
 }
@@ -254,14 +253,23 @@ function banner(status, msg, ratio) {
          `<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
 }
 
-// ---------- Main Diagnose (完全對齊 Python 版邏輯) ----------
+// ---------- 核心分析流程（完全對齊 Python 端） ----------
 async function diagnose(file) {
-  $('status').textContent = 'Analyzing…';
+  if ($('status')) $('status').textContent = 'Analyzing…';
   try {
     const bmp = await createImageBitmap(file);
     const s = Math.min(1, MAX_INPUT_SIDE / Math.max(bmp.width, bmp.height));
-    const view = $('view');
-    view.width = Math.round(bmp.width * s); view.height = Math.round(bmp.height * s);
+    
+    let view = $('view');
+    if (!view) {
+      view = document.createElement('canvas');
+      view.id = 'view';
+      view.style.display = 'none';
+      document.body.appendChild(view);
+    }
+
+    view.width = Math.round(bmp.width * s); 
+    view.height = Math.round(bmp.height * s);
     const ctx = view.getContext('2d');
     ctx.drawImage(bmp, 0, 0, view.width, view.height);
     const rgba = cv.imread(view), rgb = new cv.Mat();
@@ -332,17 +340,17 @@ async function diagnose(file) {
     const note = ` (Checked ${regions.length} leaf region(s))`;
     let html;
 
-    // 1) No leaf region found -> not a tomato
+    // 1) 沒有找到任何葉片區域 -> 非番茄
     if (!regions.length) {
       html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
-      cv.imshow($('view'), rgb);
+      cv.imshow(view, rgb);
       hideCanvas('out-leafmask');
     } 
-    // 2) No region is a tomato leaf -> not a tomato, with confidence
+    // 2) 有找到區域，但沒有一個符合番茄葉信心門檻 -> 非番茄
     else if (!tomato_found) {
       const chosen = results.reduce((a, b) => (b.score > a.score ? b : a));
       html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', chosen.non_tomato_conf)}.${note}`);
-      cv.imshow($('view'), rgb);
+      cv.imshow(view, rgb);
       hideCanvas('out-leafmask');
     } 
     else {
@@ -361,14 +369,14 @@ async function diagnose(file) {
       const tomato_line = confLine('🍅 <b>Tomato leaf</b>', chosen.tomato_conf);
       const { ratio, leafVis, lesionVis } = analyzeLeaf(chosen.crop);
 
-      // 3) Tomato, but no late blight
+      // 3) 是番茄葉，但沒有晚疫病
       if (label === "Not_late_blight") {
         const lb_line = confLine('<b>No late blight detected</b>', chosen.stage2_conf);
         html = banner('tomato-without-late-blight', `${tomato_line}<br>${lb_line}.${note}`);
-        cv.imshow($('view'), rgb);
+        cv.imshow(view, rgb);
         showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       } 
-      // 4) Tomato with late blight
+      // 4) 是番茄葉且患有晚疫病
       else {
         const lb_line = confLine('⚠️ <b>Late blight detected</b>', chosen.stage2_conf);
         let advice = "";
@@ -380,7 +388,7 @@ async function diagnose(file) {
           advice = "🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.";
         }
         html = banner('tomato-with-late-blight', `${tomato_line}<br>${lb_line}<br>${advice}${note}`, ratio);
-        cv.imshow($('view'), lesionVis);
+        cv.imshow(view, lesionVis);
         showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
         leafVis.delete(); lesionVis.delete();
       }
@@ -388,11 +396,15 @@ async function diagnose(file) {
 
     results.forEach(r => r.crop && r.crop.delete());
     rgb.delete();
-    $('report').innerHTML = html;
-    $('report').hidden = false;
-    $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
+    
+    const rep = $('report');
+    if (rep) {
+      rep.innerHTML = html;
+      rep.hidden = false;
+    }
+    if ($('status')) $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
   } catch (err) {
-    $('status').textContent = 'Error while analyzing: ' + (err.message || err);
+    if ($('status')) $('status').textContent = 'Error while analyzing: ' + (err.message || err);
     console.error(err);
   }
 }
@@ -402,5 +414,7 @@ function showMat(id, title, mat) {
   cv.imshow(canvasEl, mat);  
 }
 
-$('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
+if ($('file')) {
+  $('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
+}
 init();
