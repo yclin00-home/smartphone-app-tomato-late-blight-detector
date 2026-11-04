@@ -131,7 +131,7 @@ function analyzeLeaf(rgbCrop) {
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
   const les1 = cv.bitwise_and(les0, leaf, les0);
   
-  // 對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊
+  // 對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊（小紅線）
   const les = morph(les1, cv.MORPH_OPEN, 3);
   les1.delete(); les0.delete();
 
@@ -178,7 +178,7 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- Output panels (已修復 Canvas 取得邏輯) ----------
+// ---------- Output panels (已修正，絕對回傳 DOM 上的原生 canvas) ----------
 function getCanvas(id, title) {
   let c = $(id);
   if (!c) {
@@ -194,21 +194,30 @@ function getCanvas(id, title) {
       det.append(sum, row);
       $('report').insertAdjacentElement('afterend', det);
     }
+    
     let wrap = $('wrap-' + id);
     if (!wrap) {
       wrap = document.createElement('div');
-      wrap.id = 'wrap-' + id; wrap.style.cssText = 'flex:1 1 320px;min-width:0';
+      wrap.id = 'wrap-' + id; 
+      wrap.style.cssText = 'flex:1 1 320px;min-width:0';
       const cap = document.createElement('div');
-      cap.textContent = title; cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
+      cap.textContent = title; 
+      cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
+      
       c = document.createElement('canvas');
-      c.id = id; c.style.maxWidth = '100%';
+      c.id = id; 
+      c.style.maxWidth = '100%';
+      
       wrap.append(cap, c);
       $('expert-row').appendChild(wrap);
+    } else {
+      c = wrap.querySelector('canvas');
     }
   }
+  
   let wrap = $('wrap-' + id);
   if (wrap) wrap.hidden = false;
-  return $(id); // 確保明確回傳原生 canvas DOM 元素
+  return c;
 }
 
 function showMat(id, title, mat) { cv.imshow(getCanvas(id, title), mat); }
