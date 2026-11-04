@@ -53,7 +53,6 @@ function morph(mask, op, size) {
   return out;
 }
 
-// 升級為 v2 的精準輪廓與獨立區塊提取
 function findLeafContoursAndCrops(rgb) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
@@ -71,7 +70,6 @@ function findLeafContoursAndCrops(rgb) {
   for (let i = 1; i < n; i++) {
     const [x, y, w, h, area] = [0, 1, 2, 3, 4].map(j => stats.data32S[i * 5 + j]);
     if (area >= MIN_LEAF_FRAC * rgb.rows * rgb.cols) {
-      // 擷取單一葉片精準輪廓
       const singleMask = new cv.Mat.zeros(labels.rows, labels.cols, cv.CV_8U);
       for (let r = 0; r < labels.rows; r++) {
         for (let c = 0; c < labels.cols; c++) {
@@ -91,7 +89,7 @@ function findLeafContoursAndCrops(rgb) {
   return leafItems.slice(0, MAX_LEAVES);
 }
 
-// 畫出貼合葉緣的純輪廓線（不使用方形框）
+// 畫出貼合葉緣的純輪廓線
 function drawPureLeafOutlines(rgb, analyzedResults) {
   const vis = rgb.clone();
   const thickness = Math.max(2, Math.floor(rgb.cols / 300));
@@ -104,7 +102,6 @@ function drawPureLeafOutlines(rgb, analyzedResults) {
 
     cv.drawContours(vis, res.contours, -1, color, thickness);
     
-    // 計算輪廓中心點以放置編號標籤 (#1, #2...)
     let M = cv.moments(res.contours.get(0));
     let cX = M.m00 > 0 ? Math.round(M.m10 / M.m00) : res.box.x + 8;
     let cY = M.m00 > 0 ? Math.round(M.m01 / M.m00) : res.box.y + 35;
@@ -136,7 +133,6 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o.logits.data));
 }
 
-// 計算感染比例與病斑高亮
 function calcInfectionRatio(rgbCrop) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
@@ -152,6 +148,13 @@ function calcInfectionRatio(rgbCrop) {
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
 
+  // 1. 取得葉片外框 (Leaf Mask)
+  const leafVis = rgbCrop.clone();
+  const contours = new cv.MatVector(), hier = new cv.Mat();
+  cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  cv.drawContours(leafVis, contours, -1, new cv.Scalar(255, 0, 0, 255), Math.max(2, Math.floor(rgbCrop.cols / 300)));
+
+  // 2. 取得病斑高亮 (Analyzed Image 渲染)
   const lesionVis = rgbCrop.clone();
   const d = lesionVis.data, m = les.data;
   for (let i = 0; i < m.length; i++) {
@@ -161,8 +164,9 @@ function calcInfectionRatio(rgbCrop) {
       d[i * 3 + 2] = 0.4 * d[i * 3 + 2];
     }
   }
-  [hsv, g, dis, l0, l1, leaf, dark, les0, les].forEach(x => x.delete());
-  return { ratio, lesionVis };
+  [hsv, g, dis, l0, l1, leaf, dark, les0, les, hier].forEach(x => x.delete());
+  contours.delete();
+  return { ratio, leafVis, lesionVis };
 }
 
 // ---------- Extra output canvases ----------
@@ -191,7 +195,7 @@ function hideCanvas(id) {
   if (wrap) wrap.hidden = true;
 }
 
-// ---------- Multi-Report Rendering (對應 Python v2 介面卡片與顏色強制修正) ----------
+// ---------- Multi-Report Rendering ----------
 function renderMultiReport(analyzedResults) {
   let htmlCards = '';
   analyzedResults.forEach((res, idx) => {
@@ -258,7 +262,7 @@ async function diagnose(file) {
 
     if (!leafItems.length) {
       const emptyReport = renderMultiReport([{ status: 'non-tomato', msg: '🚫 <b>Non-tomato leaf</b> — No valid leaf regions detected.' }]);
-      showMat('out-analyzed', '1. True Leaf Edge Outlines', rgb);
+      showMat('out-analyzed', 'Analyzed Image', rgb);
       hideCanvas('out-leafmask');
       $('report').innerHTML = emptyReport;
       $('report').hidden = false;
@@ -268,7 +272,8 @@ async function diagnose(file) {
     }
 
     const analyzedResults = [];
-    let firstBlightLesionVis = rgb.clone();
+    let firstBlightAnalyzedVis = rgb.clone();
+    let firstBlightLeafMaskVis = rgb.clone();
     let hasBlightFound = false;
 
     for (const item of leafItems) {
@@ -286,7 +291,7 @@ async function diagnose(file) {
         const isBlight = lbConf >= (1 - lbConf);
 
         if (isBlight) {
-          const { ratio, lesionVis } = calcInfectionRatio(crop);
+          const { ratio, leafVis, lesionVis } = calcInfectionRatio(crop);
           let advice = '';
           if (ratio < 33.3) {
             advice = 'Advice: Mild late blight. Recommend removing infected leaves and applying copper fungicide.';
@@ -306,14 +311,23 @@ async function diagnose(file) {
           });
 
           if (!hasBlightFound) {
-            firstBlightLesionVis.delete();
-            firstBlightLesionVis = rgb.clone();
-            // 在全圖對應位置填入病斑視覺化
-            let roi = firstBlightLesionVis.roi(new cv.Rect(x, y, w, h));
-            lesionVis.copyTo(roi);
-            roi.delete();
+            // 1. 病斑範圍 (Analyzed Image)
+            firstBlightAnalyzedVis.delete();
+            firstBlightAnalyzedVis = rgb.clone();
+            let roi1 = firstBlightAnalyzedVis.roi(new cv.Rect(x, y, w, h));
+            lesionVis.copyTo(roi1);
+            roi1.delete();
+
+            // 2. 葉片邊緣 (Leaf Mask)
+            firstBlightLeafMaskVis.delete();
+            firstBlightLeafMaskVis = rgb.clone();
+            let roi2 = firstBlightLeafMaskVis.roi(new cv.Rect(x, y, w, h));
+            leafVis.copyTo(roi2);
+            roi2.delete();
+
             hasBlightFound = true;
           }
+          leafVis.delete();
           lesionVis.delete();
         } else {
           const nlbConf = 1 - lbConf;
@@ -339,15 +353,15 @@ async function diagnose(file) {
     }
 
     const pureOutlinesVis = drawPureLeafOutlines(rgb, analyzedResults);
-    const lesionOutputVis = hasBlightFound ? firstBlightLesionVis : rgb;
     const htmlReport = renderMultiReport(analyzedResults);
 
-    showMat('out-analyzed', '1. True Leaf Edge Outlines', pureOutlinesVis);
-    showMat('out-leafmask', '2. Lesion Highlight (Late Blight Only)', lesionOutputVis);
+    // 依照 Python 順序：第一張是原圖帶邊緣/編號，接下來是 Analyzed Image 與 Leaf Mask
+    showMat('out-analyzed', 'Analyzed Image', hasBlightFound ? firstBlightAnalyzedVis : rgb);
+    showMat('out-leafmask', 'Leaf Mask (Red Outline)', hasBlightFound ? firstBlightLeafMaskVis : rgb);
 
     pureOutlinesVis.delete();
-    if (!hasBlightFound) firstBlightLesionVis.delete();
-    else lesionOutputVis.delete();
+    firstBlightAnalyzedVis.delete();
+    firstBlightLeafMaskVis.delete();
     rgb.delete();
 
     $('report').innerHTML = htmlReport;
