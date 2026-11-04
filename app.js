@@ -134,12 +134,29 @@ function analyzeLeaf(rgbCrop) {
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
 
-  // Leaf outline (red)
+  // Leaf outline (red) - Cleaned up to only draw the absolute maximum outer contour
   const leafVis = rgbCrop.clone();
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  cv.drawContours(leafVis, contours, -1, new cv.Scalar(255, 0, 0, 255),
-                  Math.max(2, Math.floor(rgbCrop.cols / 300)));
+  
+  let maxArea = 0;
+  let maxIdx = -1;
+  for (let i = 0; i < contours.size(); i++) {
+    const cnt = contours.get(i);
+    const area = cv.contourArea(cnt);
+    if (area > maxArea) {
+      maxArea = area;
+      maxIdx = i;
+    }
+  }
+
+  if (maxIdx !== -1) {
+    const singleContour = new cv.MatVector();
+    singleContour.push_back(contours.get(maxIdx));
+    cv.drawContours(leafVis, singleContour, -1, new cv.Scalar(255, 0, 0, 255),
+                     Math.max(2, Math.floor(rgbCrop.cols / 300)));
+    singleContour.delete();
+  }
 
   // Lesion overlay (red tint)
   const lesionVis = rgbCrop.clone();
@@ -157,8 +174,7 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- Output panels (created automatically, same as the Python version) ----------
-// "Analyzed Image" = the main #view canvas. The two expert panels sit in an open <details> block.
+// ---------- Output panels ----------
 function getCanvas(id, title) {
   let wrap = $('wrap-' + id);
   if (!wrap) {
@@ -227,7 +243,6 @@ async function diagnose(file) {
 
     const regions = findLeafRegions(rgb);
 
-    // Detected leaf regions (red boxes) get their own panel, like the Python version
     const bc = getCanvas('out-boxes', 'Detected Leaf Regions (Red Boxes)');
     cv.imshow(bc, rgb);
     const bctx = bc.getContext('2d');
@@ -250,13 +265,13 @@ async function diagnose(file) {
         const stage2Conf = Math.max(lb, nlb);
         results.push({
           top: lb >= nlb ? 'blight' : 'not',
-          tomatoConf,                    // Stage 1: confidence it is a tomato leaf
-          stage2Conf,                    // Stage 2: confidence of late blight / no late blight
+          tomatoConf,
+          stage2Conf,
           score: tomatoConf * stage2Conf,
           crop: crop.clone(),
         });
       } else {
-        const nt = p1[1 - M1_TOMATO];    // Stage 1: confidence it is NOT a tomato leaf
+        const nt = p1[1 - M1_TOMATO];
         results.push({ top: 'non', nonTomatoConf: nt, score: nt });
       }
       crop.delete();
@@ -268,18 +283,15 @@ async function diagnose(file) {
     let html;
 
     if (!regions.length) {
-      // 1) No leaf region found -> not a tomato (models were not run, so no confidence)
       html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!tomato.length) {
-      // 2) No region is a tomato leaf -> not a tomato, with confidence
       const ch = results.reduce((a, b) => (b.score > a.score ? b : a));
       html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', ch.nonTomatoConf)}.${note}`);
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!blighted.length) {
-      // 3) Tomato, but no late blight: tomato confidence + "no late blight" confidence
       const ch = tomato.reduce((a, b) => (b.score > a.score ? b : a));
       const { leafVis, lesionVis } = analyzeLeaf(ch.crop);
       html = banner('tomato-without-late-blight',
@@ -289,7 +301,6 @@ async function diagnose(file) {
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       leafVis.delete(); lesionVis.delete();
     } else {
-      // 4) Tomato with late blight: both confidences + severity and advice
       const ch = blighted.reduce((a, b) => (b.score > a.score ? b : a));
       const { ratio, leafVis, lesionVis } = analyzeLeaf(ch.crop);
       const advice = ratio < 33.3
