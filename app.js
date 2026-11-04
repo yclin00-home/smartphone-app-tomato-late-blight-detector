@@ -1,11 +1,9 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 
-// 與 Python 的 classes_json 完全對齊的類別名稱
 let CLASSES_M1 = ['Non_tomato', 'Tomato'];
 let CLASSES_M2 = ['Late_blight', 'Not_late_blight'];
 
-// 狀態顏色：只有晚疫病為紅色，其餘維持中性色
 const STATUS_COLORS = {
   'non-tomato': '#555555',
   'tomato-without-late-blight': '#1e8449',
@@ -44,7 +42,60 @@ async function init() {
   }
 }
 
-// ---------- OpenCV 輔助函式 ----------
+// 取得或安全建立 Canvas 的共用輔助函式（絕不回傳 undefined）
+function getSafeCanvas(id, title) {
+  let c = document.getElementById(id);
+  if (!c) {
+    let det = document.getElementById('expert');
+    if (!det) {
+      det = document.createElement('details');
+      det.id = 'expert'; 
+      det.open = true; 
+      det.style.margin = '12px 0';
+      const sum = document.createElement('summary');
+      sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; 
+      sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
+      const row = document.createElement('div');
+      row.id = 'expert-row'; 
+      row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
+      det.append(sum, row);
+      const rep = document.getElementById('report');
+      if (rep) {
+        rep.insertAdjacentElement('afterend', det);
+      } else {
+        document.body.appendChild(det);
+      }
+    }
+    
+    let wrap = document.getElementById('wrap-' + id);
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'wrap-' + id; 
+      wrap.style.cssText = 'flex:1 1 320px;min-width:0';
+      const cap = document.createElement('div');
+      cap.textContent = title; 
+      cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
+      wrap.appendChild(cap);
+      let expertRow = document.getElementById('expert-row');
+      if (expertRow) expertRow.appendChild(wrap);
+    }
+
+    c = document.createElement('canvas');
+    c.id = id; 
+    c.style.maxWidth = '100%';
+    wrap.appendChild(c);
+  }
+  let wrap = document.getElementById('wrap-' + id);
+  if (wrap) wrap.hidden = false;
+  return c;
+}
+
+function hideCanvas(id) {
+  const wrap = document.getElementById('wrap-' + id);
+  if (wrap) wrap.hidden = true;
+}
+
+// OpenCV 影像處理輔助
 function inRange(hsv, lo, hi) {
   const l = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...lo, 0]);
   const h = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [...hi, 0]);
@@ -57,8 +108,7 @@ function inRange(hsv, lo, hi) {
 function morph(mask, op, size) {
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(size, size));
   const out = new cv.Mat();
-  cv.morphologyEx(mask, out, op, k, new cv.Point(-1, -1), 1,
-                  cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+  cv.morphologyEx(mask, out, op, k, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
   k.delete();
   return out;
 }
@@ -84,7 +134,6 @@ function findLeafRegions(rgb) {
   return regions.slice(0, MAX_LEAVES);
 }
 
-// ---------- 模型輔助函式 ----------
 function toTensor(rgbCrop) {
   const r = new cv.Mat();
   cv.resize(rgbCrop, r, new cv.Size(224, 224), 0, 0, cv.INTER_AREA);
@@ -137,7 +186,6 @@ function analyzeLeaf(rgbCrop) {
   const dark = inRange(hsv, [0, 0, 0], [180, 255, 80]);
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
   const les1 = cv.bitwise_and(les0, leaf, les0);
-  
   const les = morph(les1, cv.MORPH_OPEN, 3);
   les1.delete(); les0.delete();
 
@@ -148,22 +196,16 @@ function analyzeLeaf(rgbCrop) {
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   
-  let maxArea = 0;
-  let maxIdx = -1;
+  let maxArea = 0, maxIdx = -1;
   for (let i = 0; i < contours.size(); i++) {
-    const cnt = contours.get(i);
-    const area = cv.contourArea(cnt);
-    if (area > maxArea) {
-      maxArea = area;
-      maxIdx = i;
-    }
+    const area = cv.contourArea(contours.get(i));
+    if (area > maxArea) { maxArea = area; maxIdx = i; }
   }
 
   if (maxIdx !== -1) {
     const singleContour = new cv.MatVector();
     singleContour.push_back(contours.get(maxIdx));
-    cv.drawContours(leafVis, singleContour, -1, new cv.Scalar(255, 0, 0, 255),
-                    Math.max(2, Math.floor(rgbCrop.cols / 300)));
+    cv.drawContours(leafVis, singleContour, -1, new cv.Scalar(255, 0, 0, 255), Math.max(2, Math.floor(rgbCrop.cols / 300)));
     singleContour.delete();
   }
 
@@ -182,60 +224,6 @@ function analyzeLeaf(rgbCrop) {
   return { ratio, leafVis, lesionVis };
 }
 
-// ---------- UI 輔助與防呆處理 ----------
-function getCanvas(id, title) {
-  let c = document.getElementById(id);
-  let wrap = document.getElementById('wrap-' + id);
-
-  if (!c || !wrap) {
-    let det = document.getElementById('expert');
-    if (!det) {
-      det = document.createElement('details');
-      det.id = 'expert'; det.open = true; det.style.margin = '12px 0';
-      const sum = document.createElement('summary');
-      sum.textContent = '🔬 Expert View: Detailed Analysis & Masks'; 
-      sum.style.cssText = 'font-weight:bold;cursor:pointer;margin-bottom:8px';
-      const row = document.createElement('div');
-      row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
-      det.append(sum, row);
-      const rep = document.getElementById('report');
-      if (rep) {
-        rep.insertAdjacentElement('afterend', det);
-      } else {
-        document.body.appendChild(det);
-      }
-    }
-    
-    if (!wrap) {
-      wrap = document.createElement('div');
-      wrap.id = 'wrap-' + id; 
-      wrap.style.cssText = 'flex:1 1 320px;min-width:0';
-      const cap = document.createElement('div');
-      cap.textContent = title; 
-      cap.style.cssText = 'font-weight:bold;margin-bottom:4px';
-      wrap.appendChild(cap);
-      const expertRow = document.getElementById('expert-row');
-      if (expertRow) expertRow.appendChild(wrap);
-    }
-
-    if (!c) {
-      c = document.createElement('canvas');
-      c.id = id; 
-      c.style.maxWidth = '100%';
-      wrap.appendChild(c);
-    }
-  }
-  
-  wrap.hidden = false;
-  return c;
-}
-
-function hideCanvas(id) {
-  const wrap = document.getElementById('wrap-' + id);
-  if (wrap) wrap.hidden = true;
-}
-
-// ---------- 報告格式化 ----------
 function confLine(labelHtml, conf) {
   return `${labelHtml} (Confidence ${(conf * 100).toFixed(1)}%)`;
 }
@@ -253,21 +241,15 @@ function banner(status, msg, ratio) {
          `<p><b>RECOMMENDED ACTION:</b><br>${msg}</p>`;
 }
 
-// ---------- 核心分析流程（完全對齊 Python 端） ----------
+// 主診斷流程
 async function diagnose(file) {
   if ($('status')) $('status').textContent = 'Analyzing…';
   try {
     const bmp = await createImageBitmap(file);
     const s = Math.min(1, MAX_INPUT_SIDE / Math.max(bmp.width, bmp.height));
     
-    let view = $('view');
-    if (!view) {
-      view = document.createElement('canvas');
-      view.id = 'view';
-      view.style.display = 'none';
-      document.body.appendChild(view);
-    }
-
+    // 安全取得 view 畫布，若無則自動建立
+    let view = getSafeCanvas('view', 'Analyzed Image');
     view.width = Math.round(bmp.width * s); 
     view.height = Math.round(bmp.height * s);
     const ctx = view.getContext('2d');
@@ -278,7 +260,7 @@ async function diagnose(file) {
 
     const regions = findLeafRegions(rgb);
 
-    const bc = getCanvas('out-boxes', 'Detected Leaf Regions (Red Boxes)');
+    const bc = getSafeCanvas('out-boxes', 'Detected Leaf Regions (Red Boxes)');
     cv.imshow(bc, rgb);
     const bctx = bc.getContext('2d');
     bctx.lineWidth = Math.max(2, bc.width / 300);
@@ -308,14 +290,8 @@ async function diagnose(file) {
         const lb_conf = p2["Late_blight"];
         const nlb_conf = p2["Not_late_blight"];
         
-        let top, stage2_conf;
-        if (lb_conf >= nlb_conf) {
-          top = "Late_blight";
-          stage2_conf = lb_conf;
-        } else {
-          top = "Not_late_blight";
-          stage2_conf = nlb_conf;
-        }
+        let top = (lb_conf >= nlb_conf) ? "Late_blight" : "Not_late_blight";
+        let stage2_conf = (lb_conf >= nlb_conf) ? lb_conf : nlb_conf;
         
         results.push({
           top: top,
@@ -340,20 +316,16 @@ async function diagnose(file) {
     const note = ` (Checked ${regions.length} leaf region(s))`;
     let html;
 
-    // 1) 沒有找到任何葉片區域 -> 非番茄
     if (!regions.length) {
       html = banner('non-tomato', '🚫 <b>Not a tomato leaf</b> — no leaf region was detected in the image.');
       cv.imshow(view, rgb);
       hideCanvas('out-leafmask');
-    } 
-    // 2) 有找到區域，但沒有一個符合番茄葉信心門檻 -> 非番茄
-    else if (!tomato_found) {
+    } else if (!tomato_found) {
       const chosen = results.reduce((a, b) => (b.score > a.score ? b : a));
       html = banner('non-tomato', `🚫 ${confLine('<b>Not a tomato leaf</b>', chosen.non_tomato_conf)}.${note}`);
       cv.imshow(view, rgb);
       hideCanvas('out-leafmask');
-    } 
-    else {
+    } else {
       const tomato_results = results.filter(res => res.top === "Late_blight" || res.top === "Not_late_blight");
       const blighted = tomato_results.filter(res => res.top === "Late_blight");
 
@@ -369,27 +341,24 @@ async function diagnose(file) {
       const tomato_line = confLine('🍅 <b>Tomato leaf</b>', chosen.tomato_conf);
       const { ratio, leafVis, lesionVis } = analyzeLeaf(chosen.crop);
 
-      // 3) 是番茄葉，但沒有晚疫病
       if (label === "Not_late_blight") {
         const lb_line = confLine('<b>No late blight detected</b>', chosen.stage2_conf);
         html = banner('tomato-without-late-blight', `${tomato_line}<br>${lb_line}.${note}`);
         cv.imshow(view, rgb);
-        showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
-      } 
-      // 4) 是番茄葉且患有晚疫病
-      else {
+        const lm = getSafeCanvas('out-leafmask', 'Leaf Mask (Red Outline)');
+        cv.imshow(lm, leafVis);
+      } else {
         const lb_line = confLine('⚠️ <b>Late blight detected</b>', chosen.stage2_conf);
-        let advice = "";
-        if (ratio < 33.3) {
-          advice = "Mild late blight. Remove infected leaves promptly and apply an organic copper fungicide.";
-        } else if (ratio < 66.6) {
-          advice = "Moderate late blight. Isolate the plant, remove infected foliage, and use a systemic fungicide.";
-        } else {
-          advice = "🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.";
-        }
+        let advice = ratio < 33.3 
+          ? "Mild late blight. Remove infected leaves promptly and apply an organic copper fungicide." 
+          : ratio < 66.6 
+          ? "Moderate late blight. Isolate the plant, remove infected foliage, and use a systemic fungicide." 
+          : "🚨 Severe late blight! Remove and destroy the plant immediately to prevent spore transmission.";
+        
         html = banner('tomato-with-late-blight', `${tomato_line}<br>${lb_line}<br>${advice}${note}`, ratio);
         cv.imshow(view, lesionVis);
-        showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
+        const lm = getSafeCanvas('out-leafmask', 'Leaf Mask (Red Outline)');
+        cv.imshow(lm, leafVis);
         leafVis.delete(); lesionVis.delete();
       }
     }
@@ -397,21 +366,20 @@ async function diagnose(file) {
     results.forEach(r => r.crop && r.crop.delete());
     rgb.delete();
     
-    const rep = $('report');
-    if (rep) {
-      rep.innerHTML = html;
-      rep.hidden = false;
+    let rep = $('report');
+    if (!rep) {
+      rep = document.createElement('div');
+      rep.id = 'report';
+      document.body.appendChild(rep);
     }
+    rep.innerHTML = html;
+    rep.hidden = false;
+    
     if ($('status')) $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
   } catch (err) {
     if ($('status')) $('status').textContent = 'Error while analyzing: ' + (err.message || err);
     console.error(err);
   }
-}
-
-function showMat(id, title, mat) {  
-  const canvasEl = getCanvas(id, title);
-  cv.imshow(canvasEl, mat);  
 }
 
 if ($('file')) {
