@@ -101,7 +101,6 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o.logits.data));
 }
 
-// Keep only the big connected pieces of a mask (drops tiny background specks)
 function keepBigComponents(mask) {
   const labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
   const n = cv.connectedComponentsWithStats(mask, labels, stats, cents, 8, cv.CV_32S);
@@ -116,8 +115,7 @@ function keepBigComponents(mask) {
   return out;
 }
 
-// Infection ratio + leaf outline (red) + lesion overlay (red tint) for one leaf crop.
-// Caller must delete leafVis and lesionVis.
+// 分析單一葉片：計算感染比例、畫出乾淨的外框、以及過濾掉葉脈雜訊的病斑高亮
 function analyzeLeaf(rgbCrop) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
@@ -126,15 +124,21 @@ function analyzeLeaf(rgbCrop) {
   const l0 = new cv.Mat(); cv.bitwise_or(g, dis, l0);
   const l1 = morph(l0, cv.MORPH_CLOSE, 5);
   const leaf0 = morph(l1, cv.MORPH_OPEN, 5);
-  const leaf = keepBigComponents(leaf0);   // remove tiny specks so they are not outlined
+  const leaf = keepBigComponents(leaf0);
   leaf0.delete();
+
   const dark = inRange(hsv, [0, 0, 0], [180, 255, 80]);
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
-  const les = new cv.Mat(); cv.bitwise_and(les0, leaf, les);
+  const les1 = new cv.bitwise_and(les0, leaf, les0);
+  
+  // 【關鍵修正】對病斑進行開運算與閉運算，過濾掉葉脈細微的小雜訊（小紅線）
+  const les = morph(les1, cv.MORPH_OPEN, 3);
+  les1.delete(); les0.delete();
+
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
 
-  // Leaf outline (red) - Cleaned up to only draw the absolute maximum outer contour
+  // 1. 葉片外框 (只取最大外輪廓，避免內部雜訊)
   const leafVis = rgbCrop.clone();
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
@@ -158,7 +162,7 @@ function analyzeLeaf(rgbCrop) {
     singleContour.delete();
   }
 
-  // Lesion overlay (red tint)
+  // 2. 病斑高亮遮罩 (紅色半透明)
   const lesionVis = rgbCrop.clone();
   const d = lesionVis.data, m = les.data;
   for (let i = 0; i < m.length; i++) {
@@ -169,7 +173,7 @@ function analyzeLeaf(rgbCrop) {
     }
   }
 
-  [hsv, g, dis, l0, l1, leaf, dark, les0, les, hier].forEach(x => x.delete());
+  [hsv, g, dis, l0, l1, leaf, dark, les, hier].forEach(x => x.delete());
   contours.delete();
   return { ratio, leafVis, lesionVis };
 }
@@ -292,15 +296,19 @@ async function diagnose(file) {
       cv.imshow($('view'), rgb);
       hideCanvas('out-leafmask');
     } else if (!blighted.length) {
+      // 3) 健康或非晚疫病：顯示原圖（不套用病斑紅色高亮），只秀葉片外框
       const ch = tomato.reduce((a, b) => (b.score > a.score ? b : a));
-      const { leafVis, lesionVis } = analyzeLeaf(ch.crop);
+      const { leafVis } = analyzeLeaf(ch.crop);
       html = banner('tomato-without-late-blight',
         `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
         `${confLine('<b>No late blight detected</b>', ch.stage2Conf)}.${note}`);
+      
+      // 【修改重點】這裡直接顯示原圖（或乾淨的 rgb 檢視畫面），而不是病斑高亮圖
       cv.imshow($('view'), rgb);
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
-      leafVis.delete(); lesionVis.delete();
+      leafVis.delete();
     } else {
+      // 4) 確診晚疫病：才套用病斑紅色高亮遮罩
       const ch = blighted.reduce((a, b) => (b.score > a.score ? b : a));
       const { ratio, leafVis, lesionVis } = analyzeLeaf(ch.crop);
       const advice = ratio < 33.3
@@ -312,6 +320,7 @@ async function diagnose(file) {
         `${confLine('🍅 <b>Tomato leaf</b>', ch.tomatoConf)}<br>` +
         `${confLine('⚠️ <b>Late blight detected</b>', ch.stage2Conf)}<br>` +
         `${advice}${note}`, ratio);
+      
       cv.imshow($('view'), lesionVis);
       showMat('out-leafmask', 'Leaf Mask (Red Outline)', leafVis);
       leafVis.delete(); lesionVis.delete();
