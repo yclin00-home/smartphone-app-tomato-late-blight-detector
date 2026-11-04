@@ -101,6 +101,21 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o.logits.data));
 }
 
+// Keep only the big connected pieces of a mask (drops tiny background specks)
+function keepBigComponents(mask) {
+  const labels = new cv.Mat(), stats = new cv.Mat(), cents = new cv.Mat();
+  const n = cv.connectedComponentsWithStats(mask, labels, stats, cents, 8, cv.CV_32S);
+  let maxA = 0;
+  for (let i = 1; i < n; i++) maxA = Math.max(maxA, stats.data32S[i * 5 + 4]);
+  const keep = new Uint8Array(n);
+  for (let i = 1; i < n; i++) keep[i] = stats.data32S[i * 5 + 4] >= 0.1 * maxA ? 1 : 0;
+  const out = cv.Mat.zeros(mask.rows, mask.cols, cv.CV_8UC1);
+  const L = labels.data32S, O = out.data;
+  for (let k = 0; k < L.length; k++) if (keep[L[k]]) O[k] = 255;
+  labels.delete(); stats.delete(); cents.delete();
+  return out;
+}
+
 // Infection ratio + leaf outline (red) + lesion overlay (red tint) for one leaf crop.
 // Caller must delete leafVis and lesionVis.
 function analyzeLeaf(rgbCrop) {
@@ -110,7 +125,9 @@ function analyzeLeaf(rgbCrop) {
   const dis = inRange(hsv, [10, 30, 30], [35, 255, 255]);
   const l0 = new cv.Mat(); cv.bitwise_or(g, dis, l0);
   const l1 = morph(l0, cv.MORPH_CLOSE, 5);
-  const leaf = morph(l1, cv.MORPH_OPEN, 5);
+  const leaf0 = morph(l1, cv.MORPH_OPEN, 5);
+  const leaf = keepBigComponents(leaf0);   // remove tiny specks so they are not outlined
+  leaf0.delete();
   const dark = inRange(hsv, [0, 0, 0], [180, 255, 80]);
   const les0 = new cv.Mat(); cv.bitwise_or(dis, dark, les0);
   const les = new cv.Mat(); cv.bitwise_and(les0, leaf, les);
