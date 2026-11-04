@@ -260,6 +260,12 @@ function renderMultiReport(analyzedResults) {
 // ---------- Main Diagnosis Logic ----------
 async function diagnose(file) {
   $('status').textContent = 'Analyzing…';
+  let rgb = null;
+  let pureOutlinesVis = null;
+  let lesionOutputVis = null;
+  let firstBlightLesionVis = null;
+  let leafItems = [];
+
   try {
     const bmp = await createImageBitmap(file);
     const s = Math.min(1, MAX_INPUT_SIDE / Math.max(bmp.width, bmp.height));
@@ -273,11 +279,11 @@ async function diagnose(file) {
     ctx.drawImage(bmp, 0, 0, width, height);
 
     const rgba = cv.imread(tempCanvas);
-    const rgb = new cv.Mat();
+    rgb = new cv.Mat();
     cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
     rgba.delete();
 
-    const leafItems = findLeafRegions(rgb);
+    leafItems = findLeafRegions(rgb);
     if (leafItems.length === 0) {
       const emptyReport = renderMultiReport([{
         status: 'non-tomato',
@@ -293,7 +299,7 @@ async function diagnose(file) {
     }
 
     const analyzedResults = [];
-    let firstBlightLesionVis = rgb.clone();
+    firstBlightLesionVis = rgb.clone();
     let hasBlightFound = false;
 
     for (const item of leafItems) {
@@ -368,8 +374,8 @@ async function diagnose(file) {
       crop.delete();
     }
 
-    const pureOutlinesVis = drawPureLeafOutlines(rgb, analyzedResults);
-    const lesionOutputVis = hasBlightFound ? firstBlightLesionVis : rgb.clone();
+    pureOutlinesVis = drawPureLeafOutlines(rgb, analyzedResults);
+    lesionOutputVis = hasBlightFound ? firstBlightLesionVis : rgb.clone();
     const htmlReport = renderMultiReport(analyzedResults);
 
     cv.imshow($('view-outlines'), pureOutlinesVis);
@@ -377,16 +383,23 @@ async function diagnose(file) {
     $('report').innerHTML = htmlReport;
     $('report').hidden = false;
 
-    pureOutlinesVis.delete();
-    lesionOutputVis.delete();
-    firstBlightLesionVis.delete();
-    rgb.delete();
-    leafItems.forEach(item => item.contours.delete());
-
     $('status').textContent = 'Done.';
   } catch (err) {
     $('status').textContent = 'Error while analyzing: ' + (err.message || err);
     console.error(err);
+  } finally {
+    // 防禦性清理記憶體，避免重複釋放導致 Mat instance already deleted 錯誤
+    if (pureOutlinesVis && !pureOutlinesVis.isDeleted()) pureOutlinesVis.delete();
+    if (lesionOutputVis && !lesionOutputVis.isDeleted()) lesionOutputVis.delete();
+    if (firstBlightLesionVis && !firstBlightLesionVis.isDeleted()) firstBlightLesionVis.delete();
+    if (rgb && !rgb.isDeleted()) rgb.delete();
+    if (leafItems && leafItems.length > 0) {
+      leafItems.forEach(item => {
+        if (item.contours && !item.contours.isDeleted()) {
+          item.contours.delete();
+        }
+      });
+    }
   }
 }
 
