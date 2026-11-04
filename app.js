@@ -1,7 +1,7 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
-const M2_BLIGHT = 1;   // index of "Late_blight" in model 2 output
+const M2_BLIGHT = 1;   // index of "Late_blight" in model 2 output (若你的模型順序為 [Late_blight, Not_late_blight] 請改為 0)
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
@@ -12,14 +12,13 @@ async function init() {
     step = '1/3 載入 OpenCV';
     $('status').textContent = step + '…';
 
-    // 穩固的 OpenCV.js 載入防護機制（專門解決 GitHub Pages 非同步載入延遲問題）
     await new Promise((resolve, reject) => {
       let checkCount = 0;
       const interval = setInterval(() => {
         if (typeof cv !== 'undefined' && cv.Mat) {
           clearInterval(interval);
           resolve();
-        } else if (checkCount > 75) { // 超過 15 秒未載入則報錯
+        } else if (checkCount > 75) {
           clearInterval(interval);
           reject(new Error('OpenCV.js 載入逾時，請檢查網路連線或 CDN 是否被阻擋。'));
         }
@@ -208,7 +207,7 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o[outputName].data));
 }
 
-// ---------- Report Rendering ----------
+// ---------- Report Rendering (Aligned with Python render_multi_report) ----------
 function renderMultiReport(analyzedResults) {
   let htmlCards = '';
   analyzedResults.forEach((res, index) => {
@@ -353,6 +352,7 @@ async function diagnose(file) {
           }
           lesionVis.delete();
         } else {
+          // 對齊 Python 版：無晚疫病時顯示正確的信心分數與狀態
           const msg = `🍅 <b>Tomato Leaf Confidence</b>: ${(tomatoConf * 100).toFixed(1)}%<br>✅ <b>No Late Blight Confidence</b>: ${(notLbConf * 100).toFixed(1)}%`;
           analyzedResults.push({
             box: item.box,
@@ -388,7 +388,6 @@ async function diagnose(file) {
     $('status').textContent = 'Error while analyzing: ' + (err.message || err);
     console.error(err);
   } finally {
-    // 防禦性清理記憶體，避免重複釋放導致 Mat instance already deleted 錯誤
     if (pureOutlinesVis && !pureOutlinesVis.isDeleted()) pureOutlinesVis.delete();
     if (lesionOutputVis && !lesionOutputVis.isDeleted()) lesionOutputVis.delete();
     if (firstBlightLesionVis && !firstBlightLesionVis.isDeleted()) firstBlightLesionVis.delete();
