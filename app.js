@@ -2,8 +2,6 @@ const MAX_INPUT_SIDE = 800, MIN_CONF_INFERENCE = 0.60, MAX_LEAVES = 10, MIN_LEAF
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
 const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output
-const RED = [255, 0, 0, 255];
-const GREEN = [0, 255, 0, 255];
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
@@ -53,6 +51,7 @@ function morph(mask, op, size) {
   return out;
 }
 
+// 安全且正確的 OpenCV.js 輪廓與區域萃取
 function findLeafContoursAndCrops(rgb) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgb, hsv, cv.COLOR_RGB2HSV);
@@ -68,20 +67,23 @@ function findLeafContoursAndCrops(rgb) {
   const leafItems = [];
 
   for (let i = 1; i < n; i++) {
-    const [x, y, w, h, area] = [0, 1, 2, 3, 4].map(j => stats.data32S[i * 5 + j]);
+    const x = stats.data32S[i * 5 + 0];
+    const y = stats.data32S[i * 5 + 1];
+    const w = stats.data32S[i * 5 + 2];
+    const h = stats.data32S[i * 5 + 3];
+    const area = stats.data32S[i * 5 + 4];
+
     if (area >= MIN_LEAF_FRAC * rgb.rows * rgb.cols) {
-      const singleMask = new cv.Mat.zeros(labels.rows, labels.cols, cv.CV_8U);
-      for (let r = 0; r < labels.rows; r++) {
-        for (let c = 0; c < labels.cols; c++) {
-          if (labels.intAt(r, c) === i) singleMask.ucharPtr(r, c)[0] = 255;
-        }
-      }
+      // 建立單一元件的遮罩以精準抓取輪廓
+      const singleMask = new cv.Mat();
+      cv.compare(labels, new cv.Scalar(i), singleMask, cv.CMP_EQ);
+      
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
       cv.findContours(singleMask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
       
-      leafItems.push({ area, box: { x, y, w, h }, contours });
-      singleMask.delete(); hierarchy.delete();
+      leafItems.push({ area, box: { x, y, w, h }, contours, singleMask });
+      hierarchy.delete();
     }
   }
   [hsv, green, brown, mask0, m1, mask, labels, stats, cents].forEach(m => m.delete());
@@ -89,7 +91,7 @@ function findLeafContoursAndCrops(rgb) {
   return leafItems.slice(0, MAX_LEAVES);
 }
 
-// 畫出貼合葉緣的純輪廓線
+// 畫出乾淨且貼合葉緣的純輪廓線
 function drawPureLeafOutlines(rgb, analyzedResults) {
   const vis = rgb.clone();
   const thickness = Math.max(2, Math.floor(rgb.cols / 300));
@@ -102,11 +104,12 @@ function drawPureLeafOutlines(rgb, analyzedResults) {
 
     cv.drawContours(vis, res.contours, -1, color, thickness);
     
-    let M = cv.moments(res.contours.get(0));
-    let cX = M.m00 > 0 ? Math.round(M.m10 / M.m00) : res.box.x + 8;
-    let cY = M.m00 > 0 ? Math.round(M.m01 / M.m00) : res.box.y + 35;
-    
-    cv.putText(vis, `#${idx + 1}`, new cv.Point(cX, cY), cv.FONT_HERSHEY_SIMPLEX, 1.0, color, 3, cv.LINE_AA);
+    if (res.contours.size() > 0) {
+      let M = cv.moments(res.contours.get(0));
+      let cX = M.m00 > 0 ? Math.round(M.m10 / M.m00) : res.box.x + 8;
+      let cY = M.m00 > 0 ? Math.round(M.m01 / M.m00) : res.box.y + 35;
+      cv.putText(vis, `#${idx + 1}`, new cv.Point(cX, cY), cv.FONT_HERSHEY_SIMPLEX, 1.0, color, 3, cv.LINE_AA);
+    }
   });
   return vis;
 }
@@ -133,6 +136,7 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o.logits.data));
 }
 
+// 計算感染比例與病斑高亮
 function calcInfectionRatio(rgbCrop) {
   const hsv = new cv.Mat();
   cv.cvtColor(rgbCrop, hsv, cv.COLOR_RGB2HSV);
@@ -148,13 +152,13 @@ function calcInfectionRatio(rgbCrop) {
   const leafPx = cv.countNonZero(leaf);
   const ratio = leafPx === 0 ? 0 : cv.countNonZero(les) / leafPx * 100;
 
-  // 1. 取得葉片外框 (Leaf Mask)
+  // 1. 葉片外框遮罩 (Leaf Mask)
   const leafVis = rgbCrop.clone();
   const contours = new cv.MatVector(), hier = new cv.Mat();
   cv.findContours(leaf, contours, hier, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
   cv.drawContours(leafVis, contours, -1, new cv.Scalar(255, 0, 0, 255), Math.max(2, Math.floor(rgbCrop.cols / 300)));
 
-  // 2. 取得病斑高亮 (Analyzed Image 渲染)
+  // 2. 病斑高亮 (Lesion Overlay)
   const lesionVis = rgbCrop.clone();
   const d = lesionVis.data, m = les.data;
   for (let i = 0; i < m.length; i++) {
@@ -263,7 +267,7 @@ async function diagnose(file) {
     if (!leafItems.length) {
       const emptyReport = renderMultiReport([{ status: 'non-tomato', msg: '🚫 <b>Non-tomato leaf</b> — No valid leaf regions detected.' }]);
       showMat('out-analyzed', 'Analyzed Image', rgb);
-      hideCanvas('out-leafmask');
+      showMat('out-leafmask', 'Leaf Mask (Red Outline)', rgb);
       $('report').innerHTML = emptyReport;
       $('report').hidden = false;
       rgb.delete();
@@ -279,7 +283,7 @@ async function diagnose(file) {
     for (const item of leafItems) {
       const { x, y, w, h } = item.box;
       const crop = rgb.roi(new cv.Rect(x, y, w, h));
-      if (crop.empty()) { crop.delete(); continue; }
+      if (crop.empty()) { crop.delete(); item.singleMask.delete(); continue; }
 
       const t = toTensor(crop);
       const p1 = await predict(sess1, t);
@@ -311,14 +315,12 @@ async function diagnose(file) {
           });
 
           if (!hasBlightFound) {
-            // 1. 病斑範圍 (Analyzed Image)
             firstBlightAnalyzedVis.delete();
             firstBlightAnalyzedVis = rgb.clone();
             let roi1 = firstBlightAnalyzedVis.roi(new cv.Rect(x, y, w, h));
             lesionVis.copyTo(roi1);
             roi1.delete();
 
-            // 2. 葉片邊緣 (Leaf Mask)
             firstBlightLeafMaskVis.delete();
             firstBlightLeafMaskVis = rgb.clone();
             let roi2 = firstBlightLeafMaskVis.roi(new cv.Rect(x, y, w, h));
@@ -343,19 +345,20 @@ async function diagnose(file) {
         const nonTomatoConf = p1[1 - M1_TOMATO];
         const msg = `🚫 <b>Non-tomato / Background Noise Confidence</b>: ${(nonTomatoConf * 100).toFixed(1)}%<br>This region is not identified as a tomato leaf.`;
         analyzedResults.push({
-          box: { x, y, w, h },
-          contours: item.contours,
-          status: 'non-tomato',
-          msg: msg
+            box: { x, y, w, h },
+            contours: item.contours,
+            status: 'non-tomato',
+            msg: msg
         });
       }
       crop.delete();
+      item.singleMask.delete();
     }
 
     const pureOutlinesVis = drawPureLeafOutlines(rgb, analyzedResults);
     const htmlReport = renderMultiReport(analyzedResults);
 
-    // 依照 Python 順序：第一張是原圖帶邊緣/編號，接下來是 Analyzed Image 與 Leaf Mask
+    // 依照 Python 順序呈現：主畫面原圖帶輪廓、下方專家視圖顯示 Analyzed Image 與 Leaf Mask
     showMat('out-analyzed', 'Analyzed Image', hasBlightFound ? firstBlightAnalyzedVis : rgb);
     showMat('out-leafmask', 'Leaf Mask (Red Outline)', hasBlightFound ? firstBlightLeafMaskVis : rgb);
 
