@@ -80,8 +80,12 @@
         <input type="file" id="file" accept="image/*" disabled>
     </div>
 
-    <!-- 輸出畫面：左右並排的兩張圖 -->
+    <!-- 輸出畫面：並排顯示原圖與處理結果 -->
     <div class="outputs-row">
+        <div class="output-box">
+            <h3>0. Original Uploaded Image</h3>
+            <canvas id="view-original"></canvas>
+        </div>
         <div class="output-box">
             <h3>1. True Leaf Edge Outlines</h3>
             <canvas id="view-outlines"></canvas>
@@ -99,7 +103,7 @@
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <script async src="https://docs.opencv.org/4.8.0/opencv.js"></script>
     
-    <!-- 引入你寫好的 JavaScript 檔案 -->
+    <!-- 引入 JavaScript 邏輯 -->
     <script src="app.js"></script>
 </body>
 </html>
