@@ -1,7 +1,7 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
-const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output
+const M2_BLIGHT = 1;   // index of "Late_blight" in model 2 output
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
@@ -16,14 +16,17 @@ async function init() {
     } else if (!window.cv.Mat) {
       await new Promise(r => { window.cv['onRuntimeInitialized'] = r; });
     }
-    ort.env.wasm.wasmPaths = './';
+    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
     ort.env.wasm.numThreads = 1;
+
     step = '2/3 Loading model 1 (ONNX Runtime)';
     $('status').textContent = step + '…';
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
+
     step = '3/3 Loading model 2';
     $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
+
     $('status').textContent = 'Ready. Take or choose a photo.';
     $('file').disabled = false;
   } catch (err) {
@@ -153,7 +156,7 @@ function calcInfectionRatio(rgbCrop) {
   const m = lesion.data;
   for (let i = 0; i < m.length; i++) {
     if (m[i] > 0) {
-      d[i * 3] = Math.round(0.4 * d[i * 3] + 0.6 * 255);
+      d[i * 3]     = Math.round(0.4 * d[i * 3] + 0.6 * 255);
       d[i * 3 + 1] = Math.round(0.4 * d[i * 3 + 1]);
       d[i * 3 + 2] = Math.round(0.4 * d[i * 3 + 2]);
     }
@@ -181,11 +184,13 @@ function softmax(a) {
 }
 
 async function predict(sess, tensor) {
-  const o = await sess.run({ input: tensor });
-  return softmax(Array.from(o.logits.data));
+  const inputName = sess.inputNames[0];
+  const outputName = sess.outputNames[0];
+  const o = await sess.run({ [inputName]: tensor });
+  return softmax(Array.from(o[outputName].data));
 }
 
-// ---------- Report Rendering (Matching Python Multi-Report Cards) ----------
+// ---------- Report Rendering ----------
 function renderMultiReport(analyzedResults) {
   let htmlCards = '';
   analyzedResults.forEach((res, index) => {
@@ -290,7 +295,7 @@ async function diagnose(file) {
         const tensor2 = toTensor(crop);
         const p2 = await predict(sess2, tensor2);
         const lbConf = p2[M2_BLIGHT];
-        const notLbConf = 1 - lbConf;
+        const notLbConf = p2[1 - M2_BLIGHT];
         const isBlight = lbConf >= notLbConf;
 
         if (isBlight) {
