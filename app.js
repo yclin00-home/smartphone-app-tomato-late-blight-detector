@@ -1,7 +1,7 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
-const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
-const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output (若你的模型順序為 [Late_blight, Not_late_blight] 請改為 0)
+const M1_TOMATO = 1;   // 對應 m1_classes.json 中 "Tomato" 的 index (請依實際 classes 順序調整 0 或 1)
+const M2_BLIGHT = 0;   // 對應 m2_classes.json 中 "Late_blight" 的 index
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
@@ -25,7 +25,7 @@ async function init() {
         checkCount++;
       }, 200);
 
-      if (typeof cv !== 'undefined' && cv.onRuntimeInitialized) {
+      if (typeof cv !== 'undefined') {
         cv['onRuntimeInitialized'] = () => {
           clearInterval(interval);
           resolve();
@@ -44,7 +44,7 @@ async function init() {
     $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
 
-    $('status').textContent = '系統就緒，請上傳或拍攝番茄葉片照片。';
+    $('status').textContent = '系統就緒，請上傳番茄葉片照片。';
     $('file').disabled = false;
   } catch (err) {
     $('status').textContent = '步驟 ' + step + ' 發生錯誤: ' + (err.message || err);
@@ -65,8 +65,7 @@ function inRange(hsv, lo, hi) {
 function morph(mask, op, size) {
   const k = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(size, size));
   const out = new cv.Mat();
-  cv.morphologyEx(mask, out, op, k, new cv.Point(-1, -1), 1,
-                      cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+  cv.morphologyEx(mask, out, op, k, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
   k.delete();
   return out;
 }
@@ -207,7 +206,7 @@ async function predict(sess, tensor) {
   return softmax(Array.from(o[outputName].data));
 }
 
-// ---------- Report Rendering (Aligned with Python render_multi_report) ----------
+// ---------- Report Rendering ----------
 function renderMultiReport(analyzedResults) {
   let htmlCards = '';
   analyzedResults.forEach((res, index) => {
@@ -259,10 +258,7 @@ function renderMultiReport(analyzedResults) {
 // ---------- Main Diagnosis Logic ----------
 async function diagnose(file) {
   $('status').textContent = 'Analyzing…';
-  let rgb = null;
-  let pureOutlinesVis = null;
-  let lesionOutputVis = null;
-  let firstBlightLesionVis = null;
+  let rgb = null, pureOutlinesVis = null, lesionOutputVis = null, firstBlightLesionVis = null;
   let leafItems = [];
 
   try {
@@ -334,11 +330,7 @@ async function diagnose(file) {
 
           const msg = `🍅 <b>Tomato Leaf Confidence</b>: ${(tomatoConf * 100).toFixed(1)}%<br>⚠️ <b>Late Blight Confidence</b>: ${(lbConf * 100).toFixed(1)}%<br><b>${advice}</b>`;
           analyzedResults.push({
-            box: item.box,
-            contours: item.contours,
-            status: 'tomato-with-late-blight',
-            ratio: ratio,
-            msg: msg
+            box: item.box, contours: item.contours, status: 'tomato-with-late-blight', ratio: ratio, msg: msg
           });
 
           if (!hasBlightFound) {
@@ -352,23 +344,16 @@ async function diagnose(file) {
           }
           lesionVis.delete();
         } else {
-          // 對齊 Python 版：無晚疫病時顯示正確的信心分數與狀態
           const msg = `🍅 <b>Tomato Leaf Confidence</b>: ${(tomatoConf * 100).toFixed(1)}%<br>✅ <b>No Late Blight Confidence</b>: ${(notLbConf * 100).toFixed(1)}%`;
           analyzedResults.push({
-            box: item.box,
-            contours: item.contours,
-            status: 'tomato-without-late-blight',
-            msg: msg
+            box: item.box, contours: item.contours, status: 'tomato-without-late-blight', msg: msg
           });
         }
       } else {
         const nonTomatoConf = p1[1 - M1_TOMATO];
         const msg = `🚫 <b>Non-tomato / Background Noise Confidence</b>: ${(nonTomatoConf * 100).toFixed(1)}%<br>This region is not identified as a tomato leaf.`;
         analyzedResults.push({
-          box: item.box,
-          contours: item.contours,
-          status: 'non-tomato',
-          msg: msg
+          box: item.box, contours: item.contours, status: 'non-tomato', msg: msg
         });
       }
       crop.delete();
@@ -385,7 +370,7 @@ async function diagnose(file) {
 
     $('status').textContent = 'Done.';
   } catch (err) {
-    $('status').textContent = 'Error while analyzing: ' + (err.message || err);
+    $('status').textContent = 'Error: ' + (err.message || err);
     console.error(err);
   } finally {
     if (pureOutlinesVis && !pureOutlinesVis.isDeleted()) pureOutlinesVis.delete();
@@ -393,11 +378,7 @@ async function diagnose(file) {
     if (firstBlightLesionVis && !firstBlightLesionVis.isDeleted()) firstBlightLesionVis.delete();
     if (rgb && !rgb.isDeleted()) rgb.delete();
     if (leafItems && leafItems.length > 0) {
-      leafItems.forEach(item => {
-        if (item.contours && !item.contours.isDeleted()) {
-          item.contours.delete();
-        }
-      });
+      leafItems.forEach(item => { if (item.contours && !item.contours.isDeleted()) item.contours.delete(); });
     }
   }
 }
