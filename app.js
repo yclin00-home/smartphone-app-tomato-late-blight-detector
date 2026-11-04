@@ -11,14 +11,18 @@ const STATUS_COLORS = {
 };
 
 let sess1, sess2;
-const $ = id => document.getElementById(id);
+
+// 使用安全且不會被打包工具誤認成內部符號的名稱
+function getEl(id) {
+  return document.getElementById(id);
+}
 
 async function init() {
   let step = '';
   try {
     step = '1/3 Loading OpenCV';
     console.log('[DEBUG init] ' + step);
-    if ($('status')) $('status').textContent = step + '…';
+    if (getEl('status')) getEl('status').textContent = step + '…';
     if (window.cv instanceof Promise) {
       window.cv = await window.cv;
     } else if (!window.cv.Mat) {
@@ -36,11 +40,11 @@ async function init() {
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
     
     console.log('[DEBUG init] Ready success');
-    if ($('status')) $('status').textContent = 'Ready. Take or choose a photo.';
-    if ($('file')) $('file').disabled = false;
+    if (getEl('status')) getEl('status').textContent = 'Ready. Take or choose a photo.';
+    if (getEl('file')) getEl('file').disabled = false;
   } catch (err) {
     console.error('[DEBUG init ERROR at step: ' + step + ']', err);
-    if ($('status')) $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
+    if (getEl('status')) getEl('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
   }
 }
 
@@ -59,7 +63,7 @@ function getSafeCanvas(id, title) {
       const row = document.createElement('div');
       row.id = 'expert-row'; row.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px';
       det.append(sum, row);
-      const rep = document.getElementById('report');
+      const rep = getEl('report');
       if (rep) rep.insertAdjacentElement('afterend', det);
       else document.body.appendChild(det);
     }
@@ -241,7 +245,7 @@ function banner(status, msg, ratio) {
 
 async function diagnose(file) {
   console.log('[DEBUG diagnose] started with file:', file);
-  if ($('status')) $('status').textContent = 'Analyzing…';
+  if (getEl('status')) getEl('status').textContent = 'Analyzing…';
   try {
     const bmp = await createImageBitmap(file);
     console.log('[DEBUG diagnose] image bitmap loaded, size:', bmp.width, 'x', bmp.height);
@@ -369,7 +373,7 @@ async function diagnose(file) {
     results.forEach(r => r.crop && r.crop.delete());
     rgb.delete();
     
-    let rep = $('report');
+    let rep = getEl('report');
     if (!rep) {
       rep = document.createElement('div');
       rep.id = 'report';
@@ -379,14 +383,14 @@ async function diagnose(file) {
     rep.hidden = false;
     
     console.log('[DEBUG diagnose] finished successfully');
-    if ($('status')) $('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
+    if (getEl('status')) getEl('status').textContent = `Done (checked ${regions.length} leaf region(s)).`;
   } catch (err) {
     console.error('[DEBUG diagnose EXCEPTION]:', err);
-    if ($('status')) $('status').textContent = 'Error while analyzing: ' + (err.message || err);
+    if (getEl('status')) getEl('status').textContent = 'Error while analyzing: ' + (err.message || err);
   }
 }
 
-if ($('file')) {
-  $('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
+if (getEl('file')) {
+  getEl('file').addEventListener('change', e => { if (e.target.files[0]) diagnose(e.target.files[0]); });
 }
 init();
