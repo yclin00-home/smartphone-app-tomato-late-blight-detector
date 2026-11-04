@@ -1,7 +1,7 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 const M1_TOMATO = 1;   // index of "Tomato" in model 1 output
-const M2_BLIGHT = 1;   // index of "Late_blight" in model 2 output (若你的模型順序為 [Late_blight, Not_late_blight] 請改為 0)
+const M2_BLIGHT = 0;   // index of "Late_blight" in model 2 output (若你的模型順序為 [Late_blight, Not_late_blight] 請改為 0)
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
