@@ -1,6 +1,6 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
-const M1_TOMATO = 1;   // 對應 m1_classes.json 中 "Tomato" 的 index (請依實際 classes 順序調整 0 或 1)
+const M1_TOMATO = 1;   // 對應 m1_classes.json 中 "Tomato" 的 index (若順序不同請改 0)
 const M2_BLIGHT = 0;   // 對應 m2_classes.json 中 "Late_blight" 的 index
 
 let sess1, sess2;
@@ -277,6 +277,9 @@ async function diagnose(file) {
     rgb = new cv.Mat();
     cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
     rgba.delete();
+
+    // 0. 顯示原始上傳的圖片
+    cv.imshow($('view-original'), rgb);
 
     leafItems = findLeafRegions(rgb);
     if (leafItems.length === 0) {
