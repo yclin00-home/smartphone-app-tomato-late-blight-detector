@@ -1,4 +1,4 @@
-const MAX_INPUT_SIDE = 800, MIN_CONF = 0.60, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
+const MAX_INPUT_SIDE = 800, MIN_CONF = 0.75, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
 const M1_TOMATO = 1;   // 對應 m1_classes.json 中 "Tomato" 的 index (若順序不同請改 0)
 const M2_BLIGHT = 0;   // 對應 m2_classes.json 中 "Late_blight" 的 index
