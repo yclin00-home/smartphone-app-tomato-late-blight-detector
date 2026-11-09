@@ -1,7 +1,7 @@
 const MAX_INPUT_SIDE = 800, MIN_CONF = 0.75, MAX_LEAVES = 10, MIN_LEAF_FRAC = 0.05;
 const MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
-const M1_TOMATO = 1;   // 對應 m1_classes.json 中 "Tomato" 的 index (若順序不同請改 0)
-const M2_BLIGHT = 0;   // 對應 m2_classes.json 中 "Late_blight" 的 index
+const M1_TOMATO = 1;   // Index of "Tomato" in m1_classes.json (change to 0 if the order differs)
+const M2_BLIGHT = 0;   // Index of "Late_blight" in m2_classes.json
 
 let sess1, sess2;
 const $ = id => document.getElementById(id);
@@ -9,7 +9,7 @@ const $ = id => document.getElementById(id);
 async function init() {
   let step = '';
   try {
-    step = '1/3 載入 OpenCV';
+    step = '1/3 Loading OpenCV';
     $('status').textContent = step + '…';
 
     await new Promise((resolve, reject) => {
@@ -20,7 +20,7 @@ async function init() {
           resolve();
         } else if (checkCount > 75) {
           clearInterval(interval);
-          reject(new Error('OpenCV.js 載入逾時，請檢查網路連線或 CDN 是否被阻擋。'));
+          reject(new Error('OpenCV.js loading timed out. Please check your network connection or whether the CDN is blocked.'));
         }
         checkCount++;
       }, 200);
@@ -36,18 +36,18 @@ async function init() {
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
     ort.env.wasm.numThreads = 1;
 
-    step = '2/3 載入模型 1 (Tomato)';
+    step = '2/3 Loading Model 1 (Tomato)';
     $('status').textContent = step + '…';
     sess1 = await ort.InferenceSession.create('m1_tomato.onnx');
 
-    step = '3/3 載入模型 2 (Late Blight)';
+    step = '3/3 Loading Model 2 (Late Blight)';
     $('status').textContent = step + '…';
     sess2 = await ort.InferenceSession.create('m2_late_blight.onnx');
 
-    $('status').textContent = '系統就緒，請上傳番茄葉片照片。';
+    $('status').textContent = 'System ready. Please upload a tomato leaf photo.';
     $('file').disabled = false;
   } catch (err) {
-    $('status').textContent = '步驟 ' + step + ' 發生錯誤: ' + (err.message || err);
+    $('status').textContent = 'Error at step ' + step + ': ' + (err.message || err);
     console.error(err);
   }
 }
@@ -278,7 +278,7 @@ async function diagnose(file) {
     cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
     rgba.delete();
 
-    // 0. 顯示原始上傳的圖片
+    // 0. Display the original uploaded image
     cv.imshow($('view-original'), rgb);
 
     leafItems = findLeafRegions(rgb);
