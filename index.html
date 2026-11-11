@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tomato Disease Report v2</title>
+    
+    <!-- PWA Manifest 宣告 -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#1f4d2b">
+
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -105,5 +110,16 @@
     
     <!-- 引入 JavaScript 邏輯 -->
     <script src="app.js"></script>
+
+    <!-- 自動註冊 Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then(reg => console.log('Service Worker 註冊成功:', reg.scope))
+                    .catch(err => console.log('Service Worker 註冊失敗:', err));
+            });
+        }
+    </script>
 </body>
 </html>
